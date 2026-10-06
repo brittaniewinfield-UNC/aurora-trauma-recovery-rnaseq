@@ -87,6 +87,18 @@ Every other line of all three original files is preserved verbatim -- this was a
 
 `02_primary_analyses/13b_cmap_plots_figure6.qmd` (original lines 7667-7680) contains R code that sits outside any code-chunk fence in the source document -- this looks like a missing or misplaced chunk delimiter in the original, not something introduced by splitting. It was preserved verbatim rather than silently "fixed." Needs author review.
 
+## Dependencies (renv)
+
+`_dependencies.R` lists every package this repo uses (CRAN and Bioconductor, scanned from all 33 scripts). To pin exact, reproducible versions from your own working R library:
+
+```r
+install.packages("renv")      # if you don't have it already
+renv::init()                  # scans the project (incl. _dependencies.R), creates renv.lock
+renv::snapshot()               # records the exact installed versions you're actually running on
+```
+
+Commit the resulting `renv.lock` (and `renv/activate.R`, `renv/settings.json` -- `renv::init()` creates a `renv/.gitignore` automatically that keeps the actual package library itself out of git). Anyone cloning the repo can then run `renv::restore()` to recreate your exact environment.
+
 ## License
 
 MIT (see `LICENSE`) -- code only; see Data section above.
