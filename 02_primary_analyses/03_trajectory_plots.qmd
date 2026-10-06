@@ -1,0 +1,153 @@
+---
+title: "APNS Trajectory Plots"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 654-781 ---- -->
+
+# TRAJECTORY PLOTS 
+```{r}
+
+dim(latent_class_trajectories) #28280 measurements (by PID and day), 6 variables 
+
+latent_class_trajectories <- latent_class_trajectories %>%
+  mutate(APNS_Outcome = if_else(APNS_Outcome == "Loss", "Depression", as.character(APNS_Outcome)))
+
+days_by_outcome <- latent_class_trajectories %>%
+  group_by(APNS_Outcome) %>%
+  summarise(Days = list(sort(unique(Day)))) %>%
+  mutate(Days = sapply(Days, function(x) paste(x, collapse = ", ")))
+
+# to make the  line plots out to 6 months, I have the select the day that is closest to 6 months for each outcome which is on average 182.5 days 
+
+# anxious = 175 
+# avoid = 168 
+# hyperarousal = 175 
+# depression = 175 
+# mental fatigue = 203 
+# Nightmare = 161
+# pain = 196 
+# reexperience = 168 
+# sleep = 161 
+# somatic = 203 
+
+# Define the dataset with closest days to 6 months
+closest_days <- data.frame(
+  Outcome = c("Pain", "Reexperience", "Avoidance", "Mental Fatigue", "Hyperarousal", "Somatic", "Anxious", "Depression", "Nightmare", "Sleep"),
+  Closest_Day = c(196, 168, 126, 203, 175, 203, 175, 175, 161, 161))
+
+latent_class_trajectories_plot <- latent_class_trajectories %>%
+  filter(Class %in% c("Moderate Recovery", "High"))
+
+
+create_trajectory_plot <- function(data, apns_outcome, closest_days) {
+
+  data_subset <- subset(data, data$APNS == apns_outcome)
+
+  closest_day <- subset(closest_days, closest_days$Outcome == apns_outcome)$Closest_Day
+  
+  x_pad <- 0.07 * closest_day 
+  
+  summary <- data_subset %>%
+    filter(!is.na(Class)) %>%  
+    group_by(Day, Class) %>%
+    summarize(Mean_Score = mean(Score, na.rm = TRUE)) %>%
+    ungroup()
+  
+    summary$Class <- factor(summary$Class, levels = c("Low", "Moderate Recovery", 
+                                                      "Moderate", "High"))
+    max_y <- max(summary$Mean_Score, na.rm = TRUE) 
+  
+  plot <- ggplot(summary %>% filter(Day <= closest_day), aes(x = Day, y = Mean_Score, color = Class)) +
+    geom_line(linewidth = 2) + 
+    labs(title =NULL, x = "Months", y = "Score") +  # paste0(apns_outcome)
+    scale_color_manual(values = c("Low" = "#AAA8B3", 
+                                  "Moderate Recovery" = "#858290", 
+                                  "Moderate" = "#514D5B", 
+                                  "High" = "#0B090D", name = "Class")) +
+  scale_x_continuous(limits = c(0, closest_day), 
+                     breaks = c(0 + x_pad , closest_day - x_pad), labels = c("ED", "6M")) +
+    scale_y_continuous(limits = c(0, max_y + 0.2)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      text = element_text(size = 12), 
+      axis.title.y = element_blank(), 
+      axis.title.x = element_blank(), 
+      axis.text.y = element_text(size = 12, color = "black"), 
+      axis.text.x = element_text(size = 12, color = "black", hjust = 0.5),
+      plot.title = element_text(size = 13, color = "black",margin = margin(l = -10), face =  "bold"), 
+      legend.position = "none", 
+      legend.title = element_text(size = 18, color = "black"), 
+      legend.text = element_text(size = 18, color = "black"), 
+      legend.key.size =unit(0.75, "cm"),
+      panel.border = element_rect(color = "black", size = 1, fill = NA),
+      plot.margin = margin(t = 1, r = 3, b = 1, l = 3, unit = "pt"))
+  
+  return(plot)
+}
+
+trajectory_plots <- list()
+
+
+# Generate plots for each APNS outcome and save them to the list
+for (apns_outcome in unique(latent_class_trajectories$APNS)) {
+  trajectory_plots[[apns_outcome]] <- create_trajectory_plot(latent_class_trajectories, apns_outcome, closest_days)
+}
+
+line_pain <- trajectory_plots[["Pain"]]
+line_pain <- line_pain + scale_y_continuous(limits = c(-0.1, 8.5), breaks = c(0,4,8))
+
+line_reexperience <- trajectory_plots[["Reexperience"]]
+line_reexperience <- line_reexperience + scale_y_continuous(limits = c(-0.1, 4), breaks = c(0,2,4))
+
+line_avoidance <- trajectory_plots[["Avoidance"]]
+line_avoidance <- line_avoidance + scale_y_continuous(limits = c(-0.1, 4), breaks = c(0,2,4))
+
+line_mentalfatigue <- trajectory_plots[["Mental Fatigue"]]
+line_mentalfatigue <- line_mentalfatigue + scale_y_continuous(limits = c(-0.1, 8.5), breaks = c(0,4,8))
+
+line_hyperarousal <- trajectory_plots[["Hyperarousal"]]
+line_hyperarousal <- line_hyperarousal + scale_y_continuous(limits = c(-0.1, 4), breaks = c(0,2,4))
+
+line_somatic <- trajectory_plots[["Somatic"]]
+line_somatic <- line_somatic + scale_y_continuous(limits = c(-0.1, 9), breaks = c(0, 4,8))
+
+line_anxious <- trajectory_plots[["Anxious"]]
+line_anxious <- line_anxious + scale_y_continuous(limits = c(-0.1, 3), breaks = c(0,2))
+
+line_depression <- trajectory_plots[["Depression"]]
+line_depression <- line_depression + scale_y_continuous(limits = c(-0.1, 3.5), breaks = c(0,2))
+
+line_nightmare <- trajectory_plots[["Nightmare"]]
+line_nightmare <- line_nightmare + scale_y_continuous(limits = c(-0.1, 2.5), breaks = c(0, 2))
+
+line_sleep <- trajectory_plots[["Sleep"]]
+line_sleep <- line_sleep + scale_y_continuous(limits = c(-0.1, 2.75), breaks = c(0, 2))
+
+trajectory_order <- list(line_pain, line_avoidance, line_reexperience, line_hyperarousal, line_anxious, line_somatic, line_mentalfatigue, line_depression,line_nightmare, line_sleep )
+
+trajectory_plot <- ggarrange(plotlist = trajectory_order, ncol = 5, nrow = 2, align = "hv", common.legend = TRUE, legend = "bottom")
+
+ggsave(trajectory_plot, filename="Cohort Characteristics/Plots/APNS Latent Class Trajectory Line Plots - R an C.jpg", width = 7, height = 3.5, units = "in")
+
+```
+
+

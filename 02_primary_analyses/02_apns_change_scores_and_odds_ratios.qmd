@@ -1,0 +1,338 @@
+---
+title: "APNS Change Scores and Odds Ratio Analysis"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 341-653 ---- -->
+
+# APNS CHANGE SCORES
+To identify the latent class exhibiting the greatest and most stable symptom resolution within each APNS domain, classes were ranked using a robust recovery score calculated as the negative median longitudinal change divided by the interquartile range. Use of the interquartile range reduced the influence of within-class dispersion arising from heterogeneous completion and timing of the serial text message–based symptom surveys, as participant-level change scores were derived from the assessments closest to the ED visit and closest to the estimated 6-month follow-up timepoint for each participant.
+```{r}
+latent_class_survey_data <- read_csv(
+  "Data/Metadata/Latent Class Data/Latent_Class_Scores.csv") %>%
+  filter(PID %in% metadata$PID) %>%
+  rename_with(~ sub("^Loss_", "Depression_", .x), starts_with("Loss_") )
+# long-format
+long_survey <- latent_class_survey_data %>%
+  pivot_longer(cols = -PID, names_to = c("APNS", "Day"), names_sep = "_", values_to = "Score") %>%
+  mutate(Score = na_if(Score, ".") %>% as.numeric(),
+         Day = suppressWarnings(as.integer(Day))) %>%
+  filter(!is.na(Score), !is.na(Day)) %>%
+  mutate(APNS = if_else(APNS == "Avoid", "Avoidance", APNS),
+         APNS = if_else(APNS == "Depression", "Loss", APNS))
+
+# Compute ED (~earliest day) and ~6M (closest to ED + 183 days), then change(M6 - ED)
+# there is an average of 182.6 days in 6 months 
+change_scores <- long_survey %>%
+  arrange(PID, APNS, Day) %>%
+  group_by(PID, APNS) %>%
+  summarise(
+    Closest_Day_to_ED = min(Day),
+    ED_Score = Score[Day == Closest_Day_to_ED][1],
+    Closest_Day_to_M6 = Day[which.min(abs(Day - (Closest_Day_to_ED + 183)))],
+    M6_Score = Score[Day == Closest_Day_to_M6][1],
+    .groups = "drop") %>%
+  mutate(Change_Score = M6_Score - ED_Score)
+
+# Get ED latent classes and pivot to long for merging
+APNS_classes_long <- metadata %>%
+  dplyr::select(PID, APNS_ordered) %>%
+  pivot_longer(cols = -PID, names_to  = "APNS", values_to = "Class")
+
+# Keep only PIDs in your RNA cohort (if needed) and attach class
+change_scores_with_class <- change_scores %>%
+  left_join(APNS_classes_long, by = c("PID", "APNS")) %>%
+  mutate(APNS = factor(APNS, levels = APNS_ordered)) 
+
+# summary by Domain x Class
+change_scores_summary <- change_scores_with_class %>%
+  filter(!is.na(Class)) %>%
+  group_by(APNS, Class) %>%
+  summarise(
+    N = n(),
+    Median_Change = median(Change_Score, na.rm = TRUE),
+    IQR_Change = IQR(Change_Score, na.rm = TRUE),
+    Resolution_Score = -Median_Change / IQR_Change,
+    .groups = "drop") %>%
+  arrange(APNS, Class)
+
+# export
+write_csv(change_scores_summary, "Cohort Characteristics/Summaries/APNS Latent Trajectories Change Scores.csv")
+```
+
+
+# ODDS RATIO ANALYSIS 
+Pairwise associations among APNS classifications were quantified to evaluate how often domains co-occurred within Chronic or Recovered group assignments. APNS classes were first mapped to domain-specific Chronic or Recovered reference levels, and participants were encoded into binary matrices reflecting whether each domain was classified as Chronic or Recovered. For each group, all domain pairs were compared using 2×2 contingency tables, with odds ratios estimated using Fisher or Wald methods depending on cell counts and FDR correction applied across all pairwise tests. Heatmaps of log(OR) values summarize the strength and direction of co-classification patterns, highlighting domains that tend to cluster together within Chronic and Recovered outcomes.
+```{r}
+
+# convert to long format 
+APNS_classes_long <- metadata %>%
+  factorize_domains(domains = APNS_ordered, classes = class_order) %>%
+  dplyr::select(PID, all_of(APNS_ordered)) %>%
+  tidyr::pivot_longer(cols= -PID, names_to  = "APNS", values_to = "Class") %>%
+  dplyr::mutate(
+    APNS = as.character(APNS),
+    recovered_ref  = recovered_groups[APNS],  
+    chronic_ref = chronic_groups[APNS],     
+    Recovery_Group = dplyr::case_when(
+      Class == chronic_ref   ~ "Chronic",
+      Class == recovered_ref ~ "Recovered",
+      TRUE ~ "Other")) %>%
+  dplyr::select(PID, APNS, Class, Recovery_Group)
+
+# map APNS classes to Chronic / Recovered groups 
+APNS_classes_long <- metadata %>%
+  factorize_domains(domains = APNS_ordered, classes = class_order) %>%
+  dplyr::select(PID, all_of(APNS_ordered)) %>%
+  tidyr::pivot_longer(
+    cols = -PID,
+    names_to  = "APNS",
+    values_to = "Class") %>%
+  dplyr::mutate(
+    APNS = as.character(APNS),
+    recovered_ref = recovered_groups[APNS],
+    chronic_ref = chronic_groups[APNS],
+    Recovery_Group = dplyr::case_when(
+      Class == chronic_ref   ~ "Chronic",
+      Class == recovered_ref ~ "Recovered",
+      TRUE ~ "Other")) %>%
+  dplyr::select(PID, APNS, Class, Recovery_Group)
+
+
+# function to compute pairwise ORs across APNS
+compute_or <- function(binary_matrix) {
+  domain_vars <- setdiff(names(binary_matrix), "PID")
+  
+  tidyr::expand_grid(APNS_A = domain_vars, APNS_B = domain_vars) %>%
+    dplyr::filter(APNS_A != APNS_B) %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate({
+      a <- binary_matrix[[APNS_A]]
+      b <- binary_matrix[[APNS_B]]
+      tab <- table(A = a, B = b)
+      
+      if (all(dim(tab) == c(2, 2))) {
+        expected <- suppressWarnings(chisq.test(tab)$expected)
+        
+        if (any(expected < 5) || any(tab == 0)) {
+          test <- "Fisher"
+          f    <- fisher.test(tab)
+          or_val <- as.numeric(f$estimate)
+          log_or <- ifelse(is.finite(or_val) && or_val > 0, log(or_val), NA_real_)
+          ci_low <- f$conf.int[1]
+          ci_high <- f$conf.int[2]
+          p_val <- f$p.value
+        } else {
+          test <- "Wald"
+          o    <- epitools::oddsratio.wald(tab)
+          or_val <- o$measure[2, 1]
+          log_or <- ifelse(is.finite(or_val) && or_val > 0, log(or_val), NA_real_)
+          ci_low <- o$measure[2, 2]
+          ci_high <- o$measure[2, 3]
+          p_val <- o$p.value[2, 1]
+        }
+      } else {
+        test   <- NA_character_
+        or_val <- NA_real_
+        log_or <- NA_real_
+        ci_low <- NA_real_
+        ci_high <- NA_real_
+        p_val  <- NA_real_
+      }
+      
+      tibble::tibble(
+        Test = test,
+        OR = or_val,
+        log_OR = log_or,
+        CI_low = ci_low,
+        CI_high = ci_high,
+        p_value = p_val)}) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(FDR_pvalue = p.adjust(p_value, method = "fdr"))
+}
+
+
+## function to build binary matrix for a given Recovery_Group 
+make_binary_matrix <- function(classes_long, group_label, col_name) {
+  classes_long %>%
+    dplyr::mutate(
+      !!col_name := ifelse(Recovery_Group == group_label, 1L, 0L)
+    ) %>%
+    dplyr::select(PID, APNS, !!col_name) %>%
+    tidyr::pivot_wider(names_from  = APNS, values_from = !!col_name,values_fill = 0L)
+}
+
+
+# Chronic
+chronic_binary_matrix <- make_binary_matrix(
+  classes_long = APNS_classes_long,
+  group_label  = "Chronic",
+  col_name = "Chronic_Binary")
+
+# Recovered
+recovered_binary_matrix <- make_binary_matrix(
+  classes_long = APNS_classes_long,
+  group_label  = "Recovered",
+  col_name = "Recovered_Binary")
+
+chronic_or_results <- compute_or(chronic_binary_matrix)
+recovered_or_results <- compute_or(recovered_binary_matrix)
+
+```
+
+## Plot 
+```{r}
+plot_chronic_OR <- chronic_or_results %>%
+  dplyr::mutate(
+    APNS_A = factor(APNS_A, levels = rev(APNS_ordered), labels = rev(APNS_labels)),
+    APNS_B = factor(APNS_B, levels = APNS_ordered, labels = (APNS_labels)),
+    row_id = as.numeric(APNS_A),
+    col_id = as.numeric(APNS_B)) %>%
+  dplyr::filter(row_id + col_id <= length(APNS_ordered) + 1)
+
+plot_recovered_OR <- recovered_or_results %>%
+  dplyr::mutate(
+    APNS_A = factor(APNS_A, levels = rev(APNS_ordered), labels = rev(APNS_labels)),
+    APNS_B = factor(APNS_B, levels = APNS_ordered, labels = APNS_labels),
+    row_id = as.numeric(APNS_A),
+    col_id = as.numeric(APNS_B)) %>%
+  dplyr::filter(row_id + col_id <= length(APNS_ordered) + 1)
+
+# shared color limits across heatmaps 
+common_limits <- range(c(plot_chronic_OR$log_OR, plot_recovered_OR$log_OR), na.rm = TRUE)
+
+# shared diverging fill scale
+or_fill_scale <- scale_fill_gradient2(
+  name = "log(OR)",
+  low = "#A9674D",
+  mid = "#F7F5F0",
+  high = "#684B8A",
+  midpoint = 0,
+  limits = common_limits,
+  na.value = "grey90"
+)
+
+# heatmaps 
+chronic_heatmap <- ggplot(plot_chronic_OR, aes(x = APNS_B, y = APNS_A, fill = log_OR)) +
+  geom_tile(color = "grey75", linewidth = 0.2) +
+  or_fill_scale +
+  geom_text(data = plot_chronic_OR %>% dplyr::filter(FDR_pvalue < 0.01),
+            aes(label = "*"), color = "black", size = 5, hjust = 0.5, vjust = 0.7) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, color = "black"),
+    axis.text.y = element_text(color = "black"),
+    plot.title = element_text(color = "black", size = 12),
+    legend.title = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    panel.grid = element_blank()) +
+  labs(title = "Chronic Classifications", x = "", y = "")
+
+recovered_heatmap <- ggplot(plot_recovered_OR, aes(x = APNS_B, y = APNS_A, fill = log_OR)) +
+  geom_tile(color = "grey75", linewidth = 0.2) +
+    geom_text(data = plot_recovered_OR %>% dplyr::filter(FDR_pvalue < 0.01),
+            aes(label = "*"), color = "black", size = 5, hjust = 0.5, vjust = 0.7) +
+  or_fill_scale +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, color = "black"),
+    axis.text.y = element_text(color = "black"),
+    plot.title = element_text(color = "black", size =12),
+    legend.title = element_text(color = "black"),
+    legend.text = element_text(color = "black"),
+    panel.grid = element_blank()) +
+  labs(title = "Recovered Classifications",x = "", y = "")
+
+
+# combine plot
+combined_heatmap <- ggarrange(chronic_heatmap,recovered_heatmap, ncol = 2, align = "hv", common.legend = FALSE, labels = c("a", "b"), font.label = list(size = 16, face = "bold", color = "black"))
+
+ggsave("Figures/Ext Data Fig 1 - Odds Ratio Heatmap.jpg", plot = combined_heatmap, height = 3, width = 8, dpi = 500)
+
+```
+
+## Export
+```{r}
+chronic_or_export <- chronic_or_results %>%
+  mutate(APNS_A = factor(APNS_A, levels = APNS_ordered),
+         APNS_B = factor(APNS_B, levels = APNS_ordered), 
+         across(where(is.numeric), format_num))
+
+recovered_or_export <- recovered_or_results %>%
+  mutate(APNS_A = factor(APNS_A, levels = APNS_ordered),
+         APNS_B = factor(APNS_B, levels = APNS_ordered), 
+         across(where(is.numeric), format_num))
+
+out_file <- "Odds Ratio Analyses/Summaries/APNS_Odds_Ratio_Analyses.xlsx"
+
+OR_wb <- createWorkbook()
+
+addWorksheet(OR_wb, "Chronic_OR")
+addWorksheet(OR_wb, "Recovered_OR")
+
+writeData(OR_wb, "Chronic_OR", chronic_or_export, withFilter = FALSE)
+writeData(OR_wb, "Recovered_OR", recovered_or_export, withFilter = FALSE)
+
+# styles
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_center <- createStyle(halign = "center", valign = "center")
+body_left <- createStyle(halign = "left", valign = "center")
+border_style <- createStyle(border = "TopBottomLeftRight", borderStyle = "thin", 
+                            borderColour = "grey80")
+
+apply_styles <- function(sheet, df) {
+
+  # header
+  addStyle(OR_wb, sheet, header_style,
+           rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
+
+  addStyle(OR_wb, sheet, border_style,
+           rows = 1, cols = 1:ncol(df), gridExpand = TRUE, stack = TRUE)
+
+  # body 
+  addStyle(OR_wb, sheet, body_center,
+           rows = 2:(nrow(df) + 1),
+           cols = 1:ncol(df), gridExpand = TRUE)
+
+  # left-align APNS labels
+  addStyle(OR_wb, sheet, body_left,
+           rows = 2:(nrow(df) + 1),
+           cols = which(names(df) %in% c("APNS_A", "APNS_B")),
+           gridExpand = TRUE, stack = TRUE)
+
+  # borders for body
+  addStyle(OR_wb, sheet, border_style,
+           rows = 2:(nrow(df) + 1),
+           cols = 1:ncol(df),
+           gridExpand = TRUE, stack = TRUE)
+
+  freezePane(OR_wb, sheet, firstRow = TRUE)
+  setColWidths(OR_wb, sheet, cols = 1:ncol(df), widths = "auto")
+}
+
+apply_styles("Chronic_OR", chronic_or_export)
+apply_styles("Recovered_OR", recovered_or_export)
+
+saveWorkbook(OR_wb, out_file, overwrite = TRUE)
+```
+
+
+
+

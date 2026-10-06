@@ -1,0 +1,145 @@
+---
+title: "Cohort Characteristics and Table 1"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 221-340 ---- -->
+
+# COHORT CHARACTERISTICS
+Cohort-level demographic, clinical, and symptom characteristics were summarized to contextualize the RNA-seq subsample and APNS domain classifications. Variables were harmonized across timepoints and measurement types, and descriptive statistics were generated for use in Table 1.
+
+## Variables 
+Cohort variables were organized into numeric and categorical covariate sets, with APNS domain classes prioritized in the display order. Raw metadata were cleaned by recoding common missing-value codes, coercing selected variables to numeric or factor types, standardizing APNS domain factor levels, and subsetting to the variables designated for reporting in Table 1.
+```{r}
+# domains appear first in any tables
+
+
+# numeric covariates to summarize as mean (sd), min, max, etc.
+numerical_vars <- c("ADI","Age","BMI","CTQSF","ED_Pain","PDI","PRE_Pain","LifeTimeEvent_count","ED_NowSomatic_NRS_SUM","PRE_SF12_PCS","PRE_SF12_MCS","PRE_Stress_Max","PRE_PROM_Pain4a_T","PRE_PROM_AnxBank_RS","PRE_SCRN_GAD_RS","WK2_PROM_SelfEffEmo4a_T","PRE_PCL5_RS","PRE_PROM_Dep8b_T","M6_Somatic_NRS_SUM","M6_SF12_PCS","M6_SF12_MCS","M6_Stress_MAX","M6_PROM_Pain4a_T","PRE_PCL5","PRE_PROM_Dep8b","PRE_PSS10_Total_RS","WK2_FFMQ_RS","M6_FFMQ_RS","WK2_CDRISC10_RS","WK2_BFI_Neuro_RS","PRE_DESB_RS","WK2_DESB_RS","ED_MCEPS_RS", "WK2_PROM_EmoSup4a_RS", "WK2_BFI_Neuro_MN", "WK2_TIPI_Extraversion_MN", "WK2_TIPI_Agreeable_MN", "WK2_TIPI_Conscientious_MN", "WK2_TIPI_EmoStability_MN", "WK2_TIPI_OpenExper_MN")
+
+# categorical covariates to show as n (%)
+categorical_vars <-c("Gender","Education","Marital","Race","Trauma_Type","Site","ED_GenderBirthCert","PRE_PCL5","PRE_PROM_Dep8b","PRE_NSAIDs","ED_NSAIDs","EDhm_NSAIDs","PRE_SNRIs","PRE_SSRIs","ED_SNRIs","ED_SSRIs","EDhm_SNRIs","EDhm_SSRIs","PRE_Opioids","ED_Opioids","EDhm_Opioids","PRE_Contcp","ED_Contcp", "PRE_Benzo", "ED_Benzo", "PRE_SNRIs_SSRIs","ED_SNRIs_SSRIs", "EDhm_SNRIs_SSRIs")
+
+# final display order for tables (domains first, then covariates)
+variable_order <- c(APNS_ordered,"BMI","Gender","Age","Education","Marital","Race","PDI","ADI","CTQSF","LifeTimeEvent_count","Trauma_Type","ED_Pain","PRE_Pain","Site","ED_NowSomatic_NRS_SUM","PRE_SF12_PCS","PRE_SF12_MCS","PRE_Stress_Max","PRE_PROM_Pain4a_T","PRE_PROM_AnxBank_RS","PRE_SCRN_GAD_RS","WK2_PROM_SelfEffEmo4a_T","PRE_PCL5_RS","PRE_PROM_Dep8b_T","M6_Somatic_NRS_SUM","M6_SF12_PCS","M6_SF12_MCS","M6_Stress_MAX","M6_PROM_Pain4a_T","PRE_PCL5","PRE_PROM_Dep8b","PRE_PSS10_Total_RS","WK2_FFMQ_RS","M6_FFMQ_RS","WK2_CDRISC10_RS","WK2_BFI_Neuro_RS","PRE_DESB_RS","WK2_DESB_RS","ED_MCEPS_RS","WK2_PROM_EmoSup4a_RS", "WK2_BFI_Neuro_MN", "WK2_TIPI_Extraversion_MN", "WK2_TIPI_Agreeable_MN", "WK2_TIPI_Conscientious_MN", "WK2_TIPI_EmoStability_MN", "WK2_TIPI_OpenExper_MN", "PRE_SNRIs","PRE_SSRIs","ED_SNRIs","ED_SSRIs","EDhm_SNRIs","EDhm_SSRIs","PRE_Opioids","ED_Opioids","EDhm_Opioids","PRE_Contcp","ED_Contcp","PRE_Benzo","ED_Benzo","PRE_SNRIs_SSRIs","ED_SNRIs_SSRIs", "EDhm_SNRIs_SSRIs")
+
+missing_codes <- c("", "NA", ".", "-5", "-6", "-7", "-8", "-9")
+
+metadata_table1 <- metadata %>%
+  mutate(across(all_of(numerical_vars),
+                ~ suppressWarnings(as.numeric(replace(.x, .x %in% missing_codes, NA))))) %>%
+  mutate(across(all_of(categorical_vars), factor)) %>%
+  factorize_domains(domains = APNS_ordered, classes = class_order) %>%
+  mutate(across(all_of(APNS_ordered),
+                ~ factor(.x, levels = intersect(class_order, levels(.x)))))
+
+# keep only variables we’ll report
+metadata_table1 <- metadata_table1 %>%
+  dplyr::select(any_of(c("PID","INVENTORY.CODE")), all_of(variable_order))
+
+```
+
+## Table 1 
+Cohort characteristics were summarized by computing counts and percentages for categorical variables and mean (SD) with range for numeric variables, using a unified function that preserves the predefined variable order. The resulting combined table was exported as a CSV file for inclusion as Table 1 describing the RNA-seq analysis cohort.
+```{r}
+
+table1_overall <- function(data, var_order = variable_order) {
+  # categorical: n and %
+  cat_tbl <- data %>%
+    dplyr::select(any_of(var_order)) %>%
+    dplyr::select(where(is.factor)) %>%
+    pivot_longer(everything(), names_to = "Variable", values_to = "Level") %>%
+    filter(!is.na(Level)) %>%
+    group_by(Variable, Level) %>%
+    summarise(n = n(), .groups = "drop_last") %>%
+    mutate(pct = round(100 * n / sum(n), 0),
+           `Sample Size` = sum(n),
+           Summary = paste0(n, " (", pct, "%)"), 
+           Range = "") %>%
+    ungroup() %>%
+    dplyr::select(Variable, `Sample Size`, Level, Summary, Range)
+
+  # numeric: mean (sd), min, max
+  num_tbl <- data %>%
+    dplyr::select(any_of(var_order)) %>%
+    dplyr::select(where(is.numeric)) %>%
+    pivot_longer(everything(), names_to = "Variable", values_to = "value") %>%
+    group_by(Variable) %>%
+    summarise(`Sample Size`  = sum(!is.na(value)),
+              mean = mean(value, na.rm = TRUE),
+              sd = sd(value, na.rm = TRUE),
+              min = min(value, na.rm = TRUE),
+              max = max(value, na.rm = TRUE),
+              .groups = "drop") %>%
+    mutate(Level = "",
+           Summary = paste0(round(mean, 1), " (", round(sd, 1), ")"), 
+           Range = paste0(round(min, 1), "\u2013", round(max, 1))) %>%
+    dplyr::select(Variable, `Sample Size`, Level, Summary, Range)
+
+  # combine + order
+  bind_rows(cat_tbl, num_tbl) %>%
+    mutate(Level = if_else(Level != "", paste0("  ", as.character(Level)), Level),
+           `Sample Size` = as.character(`Sample Size`)) %>%
+    arrange(factor(Variable, levels = var_order)) %>%
+    
+    mutate(Min = if (!"Min" %in% names(.)) NA_real_ else Min,
+           Max = if (!"Max" %in% names(.)) NA_real_ else Max) %>%
+    dplyr::select(Variable, `Sample Size`, Level, Summary, Range)
+}
+
+# run on  paired ED–6M metadata tibble
+overall_table <- table1_overall(metadata_table1)
+
+
+```
+
+
+### Export
+```{r}
+overall_table <- table1_overall(metadata_table1)
+
+out_file <- "Cohort Characteristics/Summaries/AURORA_Comprehensive_Cohort_Characteristics_20260820.xlsx"
+
+table1_wb <- createWorkbook()
+addWorksheet(table1_wb, "Table 1")
+
+writeData(table1_wb, sheet = "Table 1", x = overall_table, withFilter = FALSE)
+
+# styles
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_center <- createStyle(halign = "center", valign = "center", wrapText = TRUE)
+body_left <- createStyle(halign = "left",   valign = "center", wrapText = TRUE)
+
+# apply styles
+addStyle(table1_wb, "Table 1", header_style,
+         rows = 1, cols = 1:ncol(overall_table), gridExpand = TRUE)
+
+addStyle(table1_wb, "Table 1", body_center, rows = 2:(nrow(overall_table) + 1),
+         cols = 1:ncol(overall_table), gridExpand = TRUE)
+
+# layout
+freezePane(table1_wb, "Table 1", firstRow = TRUE)
+setColWidths(table1_wb, "Table 1", cols = 1:ncol(overall_table), widths = "auto")
+
+saveWorkbook(table1_wb, out_file, overwrite = TRUE)
+```
+
+
+

@@ -1,0 +1,344 @@
+---
+title: "Cell-Type x Gene Interaction Analysis, UpSet Plot"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 4691-5009 ---- -->
+
+# CELL x GENES ANALYSIS
+ED–M6 changes in immune cell fractions were modeled against within-participant expression changes restricted to the shared DEG set, allowing focused evaluation of cell–gene coupling within the core recovery-associated transcriptional program. This analysis tested whether dynamic shifts in circulating immune composition tracked with the transcriptional remodeling characteristic of recovery. Significant associations were identified through gene-level regressions and FDR correction, and overlap patterns were examined to characterize shared and cell type–specific relationships.
+
+## Prep data 
+Paired ED and M6 log₂ expression matrices are constructed by merging RNA-seq data with sample metadata, aligning participants by PID, and extracting the shared DEG set. Within-participant expression change (M6–ED) is then computed to generate the delta-expression matrix used in downstream analyses.
+```{r}
+
+metadata_RNA_paired <- metadata_RNA_paired  %>%
+  mutate(PID = as.character(PID)) 
+
+# build paired ED/M6 log2 expression matrix for this analysis
+RNA_log2_cells <- RNA_seq_log2 %>%
+  mutate(PID = as.character(PID)) %>%
+  right_join(
+    metadata_RNA_paired %>%
+      dplyr::select(INVENTORY.CODE, PID, Timepoint),
+    by = c("PID", "INVENTORY.CODE")) %>%
+  dplyr::select(-dplyr::any_of("X")) %>% 
+  dplyr::select(INVENTORY.CODE, PID, Timepoint, dplyr::everything())
+
+dim(RNA_log2_cells)  # 490 x 19907 
+
+# ED log2 expression 
+shared_ED_expr <- RNA_log2_cells %>%
+  filter(Timepoint == "ED") %>%
+  dplyr::select(PID, all_of(shared_DEGs_list))
+
+# M6 log2 expression
+shared_M6_expr <- RNA_log2_cells %>%
+  filter(Timepoint == "M6") %>%
+  dplyr::select(PID, all_of(shared_DEGs_list))
+
+# ensure proper ED–M6 pairing by PID
+shared_paired_pids <- intersect(shared_ED_expr$PID, shared_M6_expr$PID)
+
+# arrange PIDs and make matrix 
+shared_ED_mat <- shared_ED_expr %>%
+  filter(PID %in% shared_paired_pids) %>%
+  arrange(PID) %>%
+  dplyr::select(all_of(shared_DEGs_list)) %>%
+  as.matrix()
+
+shared_M6_mat <- shared_M6_expr %>%
+  filter(PID %in% shared_paired_pids) %>%
+  arrange(PID) %>%
+  dplyr::select(all_of(shared_DEGs_list)) %>%
+  as.matrix()
+
+# To align the direction of gene change with the CMap convention (treated–control), I defined log2 fold change as ED–M6. Thus, positive log2FC indicates higher expression during the acute trauma response (ED)
+log2FC_matrix_shared <- shared_M6_mat - shared_ED_mat
+rownames(log2FC_matrix_shared) <- sort(shared_paired_pids)
+```
+
+## CellType-Gene Intereactions 
+Within-participant changes in immune cell fractions (M6–ED) are merged with delta-expression values for all shared DEGs. For each cell type, gene-level linear models (Δexpression ~ Δcell fraction) quantify the direction and significance of expression–cell relationships. FDR-adjusted results are summarized to identify the extent and magnitude of significant positive associations.
+```{r}
+## delta expression matrix  (M6-ED)
+cells_delta_expr <- log2FC_matrix_shared %>%
+  as_tibble() %>%
+  mutate(PID = sort(shared_paired_pids))
+
+# cell columns names
+
+cell_cols <- c("Neutrophils", "T.cells.CD8", "T.cells.CD4.naive", "NK.cells.resting", "B.cells.naive", "T.cells.regulatory..Tregs.", "T.cells.CD4.memory.resting", "Mast.cells.resting", "Monocytes", "NK.cells.activated", "B.cells.memory", "Macrophages.M2", "Plasma.cells", "Dendritic.cells.activated")
+
+cell_labels <- c("Neutrophils", "CD8T cells", "Naive CD4T cells", "Resting NK cells", "Naive B cells", "Regulatory CD4T cells.", "Resting Memory CD4T cells", "Resting Mast cells", "Monocytes", "Activated NK cells", "Memory B cells", "M2 Macrophages", "Plasm .cells", "Activated Dendritic Cells")
+
+cell_fractions_meta <- cell_fractions %>%
+  mutate(PID = as.character(PID)) %>%
+  inner_join(
+    RNA_log2_cells %>% dplyr::select(INVENTORY.CODE, PID, Timepoint),
+    by = c("INVENTORY.CODE", "Timepoint", "PID")) %>%
+  filter(PID %in% shared_paired_pids)
+
+cell_fractions_ED <- cell_fractions_meta %>%
+  filter(Timepoint == "ED") %>%
+  arrange(PID) %>%
+  dplyr::select(all_of(cell_cols))
+
+cell_fractions_M6 <- cell_fractions_meta %>%
+  filter(Timepoint == "M6") %>%
+  arrange(PID) %>%
+  dplyr::select(all_of(cell_cols))
+
+# delta cell fractions (M6 – ED) 
+delta_cell_fractions <- (cell_fractions_M6 - cell_fractions_ED) %>%
+  as_tibble() %>%
+  mutate(PID = sort(shared_paired_pids))
+
+# prep matrices for regression
+cells_delta_expr_mat <- cells_delta_expr %>%
+  dplyr::select(-PID) %>%
+  as.matrix()
+
+delta_cell_fractions_tbl <- delta_cell_fractions %>%
+  dplyr::select(-PID)
+
+genes <- colnames(cells_delta_expr_mat)
+celltypes <- colnames(delta_cell_fractions_tbl)
+
+# gene ~ delta cell-fraction regressions 
+results_list <- vector("list", length = length(celltypes))
+names(results_list) <- celltypes
+
+for (ct in celltypes) {
+  ct_vec <- delta_cell_fractions_tbl[[ct]]
+  
+  fit_mat <- apply(
+    cells_delta_expr_mat, 2,
+    function(gene_vec) coef(summary(lm(gene_vec ~ ct_vec)))[2, ])
+  
+  df <- as.data.frame(t(fit_mat))
+  df$Gene <- genes
+  df$CellType <- ct
+  
+  results_list[[ct]] <- df
+}
+
+cell_gene_associations <- bind_rows(results_list)
+
+colnames(cell_gene_associations)[1:4] <- c("Estimate", "Std.Error", "t.value", "Pvalue")
+
+cell_gene_associations_df <- cell_gene_associations %>%
+  group_by(CellType) %>%
+  mutate(FDR = p.adjust(Pvalue, method = "fdr")) %>%
+  ungroup() %>%
+  dplyr::select(CellType, Gene, everything())
+
+out_dir <- "Cell x DEG Analysis/Results per Cell Type"
+
+# helper to make safe filenames
+safe_name <- function(x) {
+  x %>%
+    str_squish() %>%
+    str_replace_all("[^A-Za-z0-9]+", "_") %>%
+    str_replace_all("_+$", "")
+}
+
+cell_gene_associations_df %>%
+  group_split(CellType) %>%
+  walk(function(df_cell) {
+
+    cell <- df_cell$CellType[[1]]
+    file_out <- file.path(out_dir, paste0("CellxGeneAssociations_", safe_name(cell), ".csv"))
+
+    df_cell %>%
+      arrange(FDR, Pvalue) %>%
+      write_csv(file_out)
+  })
+
+
+# Per-cell-type significance summaries 
+sig_cell_gene_associations <- cell_gene_associations_df %>%
+    mutate(direction = case_when(
+      Estimate > 0 ~ "Positive",
+      Estimate < 0 ~ "Negative")) %>%
+  filter(FDR < 0.01) %>%
+  count(CellType, direction, name = "n_sig_genes") %>%
+  tidyr::pivot_wider(
+    names_from  = direction,
+    values_from = n_sig_genes,
+    values_fill = 0) %>%
+  mutate(Total = Positive + Negative) %>%
+  arrange(desc(Total))
+  
+
+#write.csv(sig_cell_gene_associations, "Cell x DEG Analysis/Summaries/Cell x DEG Significant Counts.csv")
+
+
+
+# filter to positively significant cell x gene interactions 
+# focus on the how gene changes associated with cell types changes 
+positive_cell_gene_associations_df <- cell_gene_associations_df %>%
+  filter(FDR < 0.01, Estimate > 0) %>%    
+  dplyr::select(CellType, Gene)
+
+positive_cell_gene_associations_counts <- positive_cell_gene_associations_df %>%
+  count(CellType, name = "n_sig_genes") %>%
+  arrange(desc(n_sig_genes))
+
+```
+
+## Export
+```{r}
+# list csv files
+csv_files <- list.files("Cell x DEG Analysis/Results per Cell Type", full.names = TRUE)
+
+# helper to recover cell name from filename
+get_cell_name <- function(path) {
+  path %>%
+    basename() %>%
+    str_remove("^CellxGeneAssociations_") %>%
+    str_remove("\\.csv$") %>%
+    str_replace_all("_", " ") %>%
+    substr(1, 31)
+}
+
+# create workbook
+wb <- createWorkbook()
+
+for (f in csv_files) {
+
+  df <- readr::read_csv(f, show_col_types = FALSE) %>%
+    arrange(FDR, Pvalue) %>%
+    mutate(across(where(is.numeric), format_num))
+
+  sheet_name <- get_cell_name(f)
+
+  addWorksheet(wb, sheet_name)
+
+  writeData(wb, sheet = sheet_name, x = df, withFilter = FALSE)
+
+  header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+
+  body_style <- createStyle(halign = "center", valign = "center")
+
+  addStyle(wb, sheet_name, header_style, rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
+
+  addStyle(wb, sheet_name, body_style, rows = 2:(nrow(df) + 1), cols = 1:ncol(df), gridExpand = TRUE)
+
+  setColWidths(wb, sheet_name, cols = 1:ncol(df), widths = "auto")
+}
+
+saveWorkbook(wb, "Cell x DEG Analysis/Summaries/All Cell x Gene Associations.xlsx", overwrite = TRUE)
+
+
+
+```
+
+## UpSet plot
+Significant positive gene–cell associations (FDR < 0.01) are converted into a binary gene-by-cell matrix and visualized using an UpSet diagram. The plot highlights overlap patterns across immune populations, illustrating shared and cell type–specific sets of positively associated genes.
+```{r upset-plot, echo=FALSE, fig.width=10, fig.height=8}
+
+upset_input <- positive_cell_gene_associations_df %>%
+  mutate(value = 1) %>%
+  tidyr::pivot_wider(
+    names_from  = CellType,
+    values_from = value,
+    values_fill = 0) %>%
+  dplyr::select(
+    -Dendritic.cells.activated,
+    -Macrophages.M2,
+    -NK.cells.resting
+  ) %>%
+  dplyr::rename(
+    "CD8T cells" = T.cells.CD8,
+    "Naive CD4T cells" = T.cells.CD4.naive,
+    "Naive B cells" = B.cells.naive,
+    "Regulatory CD4T cells" = T.cells.regulatory..Tregs.,
+    "Resting Memory CD4T cells" = T.cells.CD4.memory.resting,
+    "Resting Mast cells" = Mast.cells.resting,
+    "Activated NK cells" = NK.cells.activated,
+    "Memory B cells" = B.cells.memory,
+    "Plasma cells" = Plasma.cells
+  )
+
+upset_df <- upset_input %>%
+  as.data.frame() %>%
+  column_to_rownames("Gene")
+
+upset_df[] <- lapply(upset_df, as.integer)
+
+set_order <- colnames(upset_df)  
+
+par(col = "black", fg = "black")
+
+plot_upset <- function(upset_df) {
+  set_order <- rev(colnames(upset_df))
+  UpSetR::upset(
+    upset_df,
+    sets = set_order,
+    keep.order = TRUE,
+    nsets = length(set_order),
+    nintersects = 10,
+    order.by = "freq",
+    decreasing = TRUE,
+    mb.ratio = c(0.6, 0.4),
+    set_size.show = FALSE,
+    sets.bar.color = "#2A93B5",
+    main.bar.color = "#2A93B5",
+    matrix.color = "black",
+    matrix.dot.alpha = 0.8,
+    point.size = 3,
+    line.size = 0.2,
+    text.scale = c(1.75, 1.75, 1.25, 1.5, 1.5 , 0),
+    mainbar.y.label = "# of Shared DEGs",
+    sets.x.label = "# Associated DEGs per\nCell Type (FDR < 0.01)")
+}
+
+# 1 y-axis label 
+# 2 y-axis text
+# 3 left bar plot axis title 
+# 4 left bar plot axis text 
+# 5 = cell names 
+# 6 = bar numbers 
+
+plot_upset(upset_df)
+
+jpeg(filename = "Figures/Ext Data Fig 3 - Cell x Gene Upset Plot.jpg", width  = 8, height = 6, units = "in", res = 600)
+plot_upset(upset_df)
+dev.off()
+```
+
+## Neutrophil only associations
+```{r}
+neutrophil_only_genes <- upset_df %>%
+  filter(Neutrophils == 1, rowSums(across(-Neutrophils)) == 0) %>%
+  rownames() %>%
+  tibble(Gene = .) 
+
+write.csv(neutrophil_only_genes, "Cell x DEG Analysis/Summaries/Neutrophil_only_positive_associations.csv")
+
+```
+
+
+
+
+
+
+

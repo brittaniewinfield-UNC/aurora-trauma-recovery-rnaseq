@@ -1,0 +1,357 @@
+---
+title: "Hormone (Biocrates) Data Preparation"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 716-1047 ---- -->
+
+# HORMONES (ED only)
+
+## Prep data
+```{r}
+# load biocrates mappings
+biocrates_pid <- read.csv("Data/Steroid Hormone Data/Data Files/Biocrates_matchingPIDtoSamplesID.csv") 
+
+# load biocrates raw hormone data
+biocrates_raw <- read.csv( "Data/Steroid Hormone Data/Data Files/Biocrates_Hormone_Data.csv") 
+
+# load sample ID and plate mapping 
+sampleID_plates <- read.csv("Data/Steroid Hormone Data/Data Files/Biocrates_SampleID_Plate_Mapping.csv")
+
+# link sample IDs to PID 
+hormone_data <- biocrates_pid %>%
+  inner_join(biocrates_raw, by = c("SAMPLE.ID" = "Sample.identification")) %>%
+  mutate(PID = as.character(PID))
+
+hormone_data <- hormone_data %>%
+  left_join(sampleID_plates, by = c("SAMPLE.ID"))
+
+# keep only PIDs present in your ED-M6 metadata
+hormone_data_paired <- hormone_data %>%
+  inner_join(Metadata_Analysis %>% dplyr::select(PID), by = "PID")
+
+# samples that were hemolytic 
+# remove samples with hemolysis / turbidity
+bad_samples <- c("842-1080", "842-1322", "830-1046", "825-1001", "846-1027", "867-1017", "841-1013", "841-1012", "829-1033", "829-1041", "828-1024", "833-1102", "833-1092", "828-1021", "846-1117", "842-1169", "873-1054")
+length(bad_samples)
+
+hormone_data_paired_filt <- hormone_data_paired %>%
+  filter(!SAMPLE.ID %in% bad_samples)
+# 193 samples to 184 
+
+# identify hormone columns (everything that isn’t an ID/meta column)
+non_hormone_cols <- c("SAMPLE ID", "PID", "Sample bar code", "Tube label", "Material", "Species", "Sample volume [µL]", "Plate")
+
+hormone_cols <- setdiff(names(hormone_data_paired_filt), non_hormone_cols)
+
+# analyte-specific LOD values
+lod_df <- tibble(
+  analyte = c("11-Deoxycorticosterone", "11-Deoxycortisol", "17-OHP", "Aldosterone", "Androstenedione", "Androsterone", "Corticosterone", "Cortisol", "Cortisone", "DHEA", "DHEAS", "DHT", "E1", "E2", "Etiocholanolone", "Progesterone", "Testosterone"),
+  lod = c(0.021, 0.0040, 0.020, 0.074,
+          0.017, 0.13, 0.0080, 0.094,
+          0.038, 0.14, 47, 0.036,
+          0.17, 0.073, 0.16, 0.038,
+          0.0061)) %>%
+  mutate(lod_sqrt2 = lod / sqrt(2))
+
+lod_lookup <- setNames(lod_df$lod_sqrt2, lod_df$analyte)
+
+# clean hormone values using analyte-specific LOD/sqrt(2) imputation
+hormones_clean <- hormone_data_paired_filt %>%
+  mutate(across(all_of(hormone_cols), as.character)) %>%
+  mutate(across(all_of(hormone_cols), trimws)) %>%
+  mutate(across(
+    all_of(hormone_cols),
+    ~ ifelse(.x == "< LOD", as.character(lod_lookup[cur_column()]), .x))) %>%
+  mutate(across(all_of(hormone_cols), readr::parse_number)) %>%
+  dplyr::select(PID, all_of(hormone_cols))
+
+# log2(x + 1) transformation
+hormone_data_analysis <- hormones_clean %>%
+  mutate(across(all_of(hormone_cols), ~ log2(.x + 1)))
+
+dim(hormone_data_analysis) #184, 22 
+
+#write.csv(hormone_data_analysis, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_ED_Data_Full_n273.csv", row.names = FALSE)
+
+```
+
+## Batch effects 
+```{r}
+hormone_data_analysis_meta <- hormone_data_analysis %>%
+  left_join(
+    hormone_data_paired_filt %>% dplyr::select(PID, Plate),
+    by = "PID") %>%
+  mutate(Plate = factor(Plate))
+
+colnames(hormone_data_analysis_meta) <- make.names(colnames(hormone_data_analysis_meta))
+
+non_hormone_cols_safe <- make.names(non_hormone_cols)
+hormone_cols_safe <- setdiff(names(hormone_data_analysis_meta), non_hormone_cols_safe)
+
+hormone_batch_plate_summary <- map_dfr(hormone_cols_safe, function(horm) {
+  
+  df <- hormone_data_analysis_meta %>%
+    dplyr::select(all_of(horm), Plate) %>%
+    na.omit()
+  
+  fit <- lm(reformulate("Plate", response = horm), data = df)
+  aov_tbl <- anova(fit)
+  ss_total <- sum(aov_tbl$`Sum Sq`)
+  
+  get_term_stats <- function(term_name) {
+    ss <- aov_tbl[term_name, "Sum Sq"]
+    p  <- aov_tbl[term_name, "Pr(>F)"]
+    df_term <- aov_tbl[term_name, "Df"]
+    tibble(
+      Term = term_name,
+      p.value = p,
+      df = df_term,
+      partial_R2 = ss / ss_total)
+  }
+  
+  term_stats <- bind_rows(get_term_stats("Plate"))
+  model_stats <- glance(fit)
+  
+  data_stats <- tibble(
+    Hormone = horm,
+    n = nrow(df),
+    mean = mean(df[[1]], na.rm = TRUE),
+    sd = sd(df[[1]], na.rm = TRUE))
+  
+  term_stats %>%
+    mutate(Hormone = horm) %>%
+    left_join(data_stats, by = "Hormone") %>%
+    mutate(
+      model_R2 = model_stats$r.squared,
+      adj_R2 = model_stats$adj.r.squared)
+  
+}) %>%
+  mutate(FDR = p.adjust(p.value, method = "BH")) %>%
+  arrange(p.value) %>%
+  mutate(Test = "ANOVA")
+
+#write_csv(hormone_batch_plate_summary, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_Batch_Effect_Summary_3-23-2026.csv")
+
+```
+
+## Data for analysis
+```{r}
+# clean ED hormone matrix
+hormone_matrix_clean <- hormone_data_analysis %>%
+  arrange(PID)
+
+dim(hormone_matrix_clean)   # 184 x 22
+length(unique(hormone_matrix_clean$PID))
+
+hormone_matrix_ED6M <- hormone_matrix_clean %>%
+  filter(PID %in% PIDs_245_ED6M) %>%
+  arrange(PID)
+
+dim(hormone_matrix_ED6M) # 184 x 22 
+length(unique(hormone_matrix_ED6M$PID)) # 184 
+
+write.csv(hormone_matrix_ED6M, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_ED_Data_184_3-23-2026.csv", row.names = FALSE)
+
+```
+
+## Normality
+```{r}
+hormone_vars <- hormone_cols  # BEFORE make.names (use original names)
+
+# raw matrix 
+hormone_matrix_raw <- hormones_clean %>%
+  filter(PID %in% hormone_matrix_clean$PID) %>%
+  arrange(PID)
+
+# log2 matrix 
+hormone_matrix_log <- hormone_matrix_clean %>%
+  arrange(PID)
+
+summarize_wide_hormones <- function(df, vars) {
+  df %>%
+    summarise(
+      across(
+        all_of(vars),
+        list(
+          N = ~ sum(is.finite(.x)),
+          Mean = ~ mean(.x, na.rm = TRUE),
+          Median = ~ median(.x, na.rm = TRUE),
+          SD = ~ sd(.x, na.rm = TRUE),
+          Skewness = ~ e1071::skewness(.x, na.rm = TRUE, type = 2),
+          Kurtosis = ~ e1071::kurtosis(.x, na.rm = TRUE, type = 2)),
+        .names = "{.col}::{.fn}")) %>%
+    pivot_longer(
+      everything(),
+      names_to = c("Hormone", ".value"),
+      names_sep = "::") %>%
+    relocate(Hormone)
+}
+
+# RAW
+hormone_stats_raw <- hormone_matrix_raw %>%
+  dplyr::select(all_of(hormone_vars)) %>%
+  summarize_wide_hormones(vars = hormone_vars) %>%
+  mutate(Scale = "Raw") %>%
+  relocate(Scale, .after = Hormone)
+
+# LOG2
+hormone_stats_log <- hormone_matrix_log %>%
+  dplyr::select(all_of(hormone_vars)) %>%
+  summarize_wide_hormones(vars = hormone_vars) %>%
+  mutate(Scale = "Log2") %>%
+  relocate(Scale, .after = Hormone)
+
+# COMBINE
+hormone_stats_compare <- bind_rows(
+  hormone_stats_raw,
+  hormone_stats_log) %>%
+  mutate(Scale = factor(Scale, levels = c("Raw", "Log2"))) %>%
+  arrange(Hormone, Scale)
+
+write.csv(hormone_stats_compare, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_ED_Data_184_Stat_Summary_3-23-2026.csv", row.names = FALSE)
+
+```
+
+
+
+
+
+# E2 (ED, WK2 & M6) (sensitive assay)
+```{r}
+
+
+E2_ED <- read.csv("Data/E2 Data/Data Files/Human_E2_ED_dataset.csv")
+E2_WK2 <- read.csv("Data/E2 Data/Data Files/Human_E2_WK2_dataset.csv") %>%
+  dplyr::rename(Pseudo_ID = Psuedo_ID)
+E2_M6 <- read.csv("Data/E2 Data/Data Files/Human_E2_Mo6_dataset.csv")
+mapping_file <- read.csv("Data/E2 Data/Data Files/Pseudo_ID_mapping_file.csv")
+
+E2_ED_mapped <- E2_ED %>%
+  left_join(
+    mapping_file %>% filter(Timepoint == "ED") %>%
+      dplyr::select(Pseudo_ID, PID),
+    by = "Pseudo_ID"
+  )
+
+E2_WK2_mapped <- E2_WK2 %>%
+  left_join(
+    mapping_file %>% filter(Timepoint == "WK2") %>%
+      dplyr::select(Pseudo_ID, PID),
+    by = "Pseudo_ID"
+  )
+
+E2_M6_mapped <- E2_M6 %>%
+  left_join(
+    mapping_file %>% filter(Timepoint == "M6") %>%
+      dplyr::select(Pseudo_ID, PID),
+    by = "Pseudo_ID"
+  )
+
+sum(is.na(E2_ED_mapped$PID))
+sum(is.na(E2_WK2_mapped$PID))
+sum(is.na(E2_M6_mapped$PID))
+
+E2_all <- bind_rows(
+  E2_ED_mapped  %>% mutate(Timepoint = "ED"),
+  E2_WK2_mapped %>% mutate(Timepoint = "WK2"),
+  E2_M6_mapped  %>% mutate(Timepoint = "M6")
+)
+
+library(dplyr)
+
+E2_ED_long <- E2_ED_mapped %>%
+  transmute(
+    PID,
+    Timepoint = "ED",
+    E2 = E2.Concentration..pg.ml._T0,
+    E2_sqrt = E2.Concentration..pg.ml._T0_sqrt
+  )
+
+E2_WK2_long <- E2_WK2_mapped %>%
+  transmute(
+    PID,
+    Timepoint = "WK2",
+    E2 = E2.Concentration..pg.ml._T1,
+    E2_sqrt = E2.Concentration..pg.ml._T1_sqrt
+  )
+
+E2_M6_long <- E2_M6_mapped %>%
+  transmute(
+    PID,
+    Timepoint = "M6",
+    E2 = coalesce(E2.Concentration..pg.ml._T2, E2.Concentration..pg.ml._T3),
+    E2_sqrt = E2.Concentration..pg.ml._M6_sqrt,
+    Date_Run = coalesce(Date.Run_T2, Date.Run_T3)
+  )
+
+E2_all <- bind_rows(E2_ED_long, E2_WK2_long, E2_M6_long) %>%
+  filter(!is.na(PID), !is.na(E2))
+
+E2_ED_only <- E2_all %>%
+  filter(Timepoint == "ED") %>%
+  distinct(PID, .keep_all = TRUE)
+nrow(E2_ED_only) # 227
+
+write.csv(E2_ED_long, "Data/E2 Data/Analysis Data/E2_Data_Full_n227.csv")
+
+
+E2_ED_M6_pids <- E2_all %>%
+  filter(Timepoint %in% c("ED", "M6")) %>%
+  distinct(PID, Timepoint) %>%
+  count(PID) %>%
+  filter(n == 2) %>%
+  pull(PID)
+length(E2_ED_M6_pids) # 158
+
+E2_ED_M6 <- E2_all %>%
+  filter(PID %in% E2_ED_M6_pids, Timepoint %in% c("ED", "M6"))
+nrow(E2_ED_M6) # 316
+
+E2_ED_WK2_M6_pids <- E2_all %>%
+  filter(Timepoint %in% c("ED", "WK2", "M6")) %>%
+  distinct(PID, Timepoint) %>%
+  count(PID) %>%
+  filter(n == 3) %>%
+  pull(PID)
+length(E2_ED_WK2_M6_pids) #8
+
+E2_ED_WK2_M6 <- E2_all %>%
+  filter(PID %in% E2_ED_WK2_M6_pids, Timepoint %in% c("ED", "WK2", "M6"))
+
+E2_ED_only_analysis <- E2_ED_only %>%
+  filter(PID %in% ED_M6_paired_PIDs)
+length(unique(E2_ED_only_analysis$PID)) # 150
+
+write.csv(E2_ED_only_analysis, "Data/E2 Data/Analysis Data/E2_Data_ED26M_150_4-16-2026.csv")
+
+E2_ED_M6_analysis <- E2_ED_M6 %>%
+  filter(PID %in% ED_M6_paired_PIDs)
+length(unique(E2_ED_M6_analysis$PID)) # 130 
+
+
+E2_ED_WK2_M6_analysis <- E2_ED_WK2_M6 %>%
+  filter(PID %in% ED_WK2_M6_paired_PIDs)
+length(unique(E2_ED_WK2_M6_analysis$PID)) # 4 
+
+```
+
+
+

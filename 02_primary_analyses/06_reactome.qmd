@@ -1,0 +1,351 @@
+---
+title: "Reactome Pathway Analysis"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 2759-3084 ---- -->
+
+## REACTOME analysis
+Constructs Reactome pathway gene sets, generates ranked gene lists for the recovered class in each APNS domain, performs FGSEA, and exports per-domain Reactome enrichment results.
+```{r}
+# Reactome gene sets 
+reactome_db <- msigdbr(
+  species = "Homo sapiens",
+  category = "C2",
+  subcategory = "CP:REACTOME")
+
+Reactome_pathways <- reactome_db %>%
+  dplyr::group_by(gs_name) %>%
+  dplyr::summarise(genes = list(gene_symbol), .groups = "drop") %>%
+  deframe()
+
+
+Reactome_analysis <- function(data, APNS, recovered_groups) {
+
+  output_dir <- "FGSEA/REACTOME/Results per APNS 6-3"
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+  recovered_class <- recovered_groups[[APNS]]
+
+  class_data <- data %>%
+    dplyr::filter(.data$APNS == !!APNS,
+                  Class == recovered_class)
+
+  ranked_genes <- create_ranked_genes(class_data)
+
+  fgsea_results <- perform_fgsea(ranked_genes, Reactome_pathways) %>%
+    dplyr::mutate(
+      APNS = APNS,
+      Class = recovered_class,
+      `Recovery Group` = "Recovered",
+      leadingEdge = sapply(leadingEdge, paste, collapse = ";")) %>%
+    dplyr::arrange(padj)
+
+  results_file <- file.path(output_dir,paste(APNS, recovered_class, "FGSEA_REACTOME.csv", sep = "_"))
+
+  readr::write_csv(fgsea_results, results_file)
+}
+
+for (a in APNS_ordered) {
+  Reactome_analysis(all_DEA_results, a, recovered_groups)
+}
+```
+
+### Load in results
+```{r}
+reactome_dir <- "FGSEA/REACTOME/Results per APNS 6-3"
+
+reactome_all <- list.files(
+  reactome_dir,
+  pattern = "FGSEA_REACTOME\\.csv$",
+  full.names = TRUE) %>%
+  map_dfr(~ read_csv(.x, show_col_types = FALSE) %>%
+            mutate(source_file = basename(.x)))
+
+
+reactome_sig_counts <- reactome_all %>%
+  filter(padj < 0.01) %>%
+  mutate(direction = case_when(
+    NES > 0 ~ "Reactomes Enriched at M6",
+    NES < 0 ~ "Reactomes Enriched at ED")) %>%
+  group_by(APNS, direction) %>%
+  summarise(n_pathways = n(), .groups = "drop") %>%
+  tidyr::pivot_wider(
+    names_from = direction,
+    values_from = n_pathways,
+    values_fill = 0) %>%
+  mutate(Total = `Reactomes Enriched at M6` + `Reactomes Enriched at ED`) %>%
+  arrange(match(APNS, APNS_ordered))
+
+write.csv(reactome_sig_counts, "FGSEA/REACTOME/Summaries/APNS Significant Reactomes Count Global.csv")
+```
+
+### Export Excel 
+```{r}
+# workbook + styles
+reactome_wb <- createWorkbook()
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_center <- createStyle(halign = "center", valign = "center")
+body_left <- createStyle(halign = "left", valign = "center")
+
+
+reactome_all <- reactome_all %>%
+    mutate(APNS = factor(APNS, levels = APNS_ordered))
+
+
+reactome_summary <- reactome_all %>%
+  filter(padj < 0.01) %>%
+  group_by(pathway) %>%
+  summarise(
+    n_APNS_sig = n_distinct(APNS),
+    APNS_sig = paste(sort(unique(as.character(APNS))), collapse = ", "),
+    avg_pval = mean(pval, na.rm = TRUE),
+    avg_padj = mean(padj, na.rm = TRUE),
+    avg_log2err = mean(log2err, na.rm = TRUE),
+    avg_ES = mean(ES, na.rm = TRUE),
+    avg_NES = mean(NES, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_APNS_sig), avg_padj) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+write.csv(reactome_summary, "FGSEA/REACTOME/Summaries/APNS Reactomes Summary.csv")
+
+
+make_sheet_name <- function(name, existing) {
+  nm <- str_replace_all(name, "[:\\\\/*?\\[\\]]", "_")
+  nm <- substr(nm, 1, 31)
+
+  if (nm %in% existing) {
+    i <- 2
+    repeat {
+      nm2 <- substr(paste0(nm, "_", i), 1, 31)
+      if (!(nm2 %in% existing)) return(nm2)
+      i <- i + 1
+    }
+  }
+  nm
+}
+
+existing_sheets <- character(0)
+
+for (apns in levels(reactome_all$APNS)) {
+
+  df_sub <- reactome_all %>%
+    filter(APNS == apns) %>%
+    arrange(Class, padj, pval)
+
+  if (nrow(df_sub) == 0) next
+
+  df_sub <- df_sub %>%
+    mutate(across(where(is.numeric), ~ format_num(.x)), `Recovery Group` = "Recovered")
+
+  sheet_name <- make_sheet_name(as.character(apns), existing_sheets)
+  existing_sheets <- c(existing_sheets, sheet_name)
+
+  addWorksheet(reactome_wb, sheet_name)
+
+  writeData(reactome_wb, sheet = sheet_name, x = df_sub, withFilter = FALSE)
+
+  # header
+  addStyle(reactome_wb, sheet = sheet_name, style = header_style,
+           rows = 1, cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+  # body default (center)
+  addStyle(reactome_wb, sheet = sheet_name, style = body_center,
+           rows = 2:(nrow(df_sub) + 1), cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+  # left-align pathway + leadingEdge only
+  left_cols <- which(names(df_sub) %in% c("pathway", "leadingEdge"))
+    if (length(left_cols) > 0) {
+      addStyle(reactome_wb, sheet = sheet_name, style = body_left, rows = 2:(nrow(df_sub) + 1), 
+              cols = left_cols, gridExpand = TRUE, stack = TRUE)
+    }
+
+  setColWidths(reactome_wb, sheet = sheet_name, cols = 1:ncol(df_sub), widths = "auto")
+
+}
+
+saveWorkbook(reactome_wb, "FGSEA/REACTOME/Summaries/All_APNS_Reactome_FGSEA.xlsx", overwrite = TRUE)
+```
+
+### Plot 
+```{r}
+# identify Reactome pathways significant across all 10 APNS
+reactome_pathways_keep <- reactome_all %>%
+  mutate(
+    padj = as.numeric(padj),
+    pathway_clean = gsub("^REACTOME_", "", pathway)) %>%
+  filter(!is.na(padj) & padj <= 0.01) %>%
+  distinct(APNS, pathway_clean) %>%
+  count(pathway_clean, name = "n_APNS_sig") %>%
+  filter(n_APNS_sig >= 10) %>%
+  pull(pathway_clean)
+
+# rank only Reactome pathways significant across all 10 APNS
+top_pathways <- reactome_all %>%
+  mutate(
+    padj = as.numeric(padj),
+    NES = as.numeric(NES),
+    pathway_clean = gsub("^REACTOME_", "", pathway)) %>%
+  filter(pathway_clean %in% reactome_pathways_keep) %>%
+  group_by(pathway_clean) %>%
+  summarise(
+    padj_mean = mean(padj, na.rm = TRUE),
+    NES_mean = mean(NES, na.rm = TRUE),
+    .groups = "drop") %>%
+  mutate(weighted_score = -log10(padj_mean) * abs(NES_mean)) %>%
+  arrange(desc(weighted_score)) %>%
+  slice_head(n = 15)
+
+pathway_levels <- top_pathways %>%
+  arrange(desc(weighted_score)) %>%
+  pull(pathway_clean)
+
+heatmap_reactome <- reactome_all %>%
+  mutate(
+    padj = as.numeric(padj),
+    NES  = as.numeric(NES),
+    APNS = factor(APNS, levels = APNS_ordered),
+    pathway_clean = gsub("^REACTOME_", "", pathway)) %>%
+  filter(pathway_clean %in% pathway_levels) %>%
+  group_by(APNS, pathway_clean) %>%
+  summarise(
+    padj = min(padj, na.rm = TRUE),
+    NES = NES[which.min(padj)][1],
+    .groups = "drop") %>%
+  mutate(
+    APNS = factor(APNS, levels = rev(APNS_ordered)),
+    pathway_clean = factor(pathway_clean, levels = pathway_levels),
+    neglogFDR = if_else(!is.na(padj) & padj > 0, -log10(padj), NA_real_))
+
+heatmap_reactome_grid <- tidyr::crossing(
+  APNS = factor(APNS_ordered, levels = APNS_ordered),
+  pathway_clean = factor(pathway_levels, levels = pathway_levels)) %>%
+  left_join(heatmap_reactome, by = c("APNS", "pathway_clean"))
+
+
+reactome_pathway_labels <- rev(c(
+    NEUTROPHIL_DEGRANULATION = "Neutrophil degranulation",
+    TOLL_LIKE_RECEPTOR_CASCADES = "TLR cascades",
+    TOLL_LIKE_RECEPTOR_TLR1_TLR2_CASCADE = "TLR1 and TLR2 cascade",
+    TOLL_LIKE_RECEPTOR_9_TLR9_CASCADE = "TLR9 cascade",
+    INTERLEUKIN_1_SIGNALING = "IL-1 signaling",
+    ANTIGEN_PROCESSING_CROSS_PRESENTATION = "Antigen processing cross presentation"))
+ 
+
+hm_plot <- heatmap_reactome_grid %>%
+  mutate(pathway_clean = factor(
+    pathway_clean,
+    levels = names(reactome_pathway_labels),
+    labels = reactome_pathway_labels)) 
+
+hm_plot <- hm_plot %>%
+  mutate(
+    neglogFDR = if_else(!is.na(padj) & padj > 0, -log10(padj), NA_real_),
+    neglogFDR_cap = pmin(neglogFDR, 10))
+
+range(hm_plot$neglogFDR, na.rm = TRUE) #2.039533 37.295967
+range(hm_plot$NES, na.rm = TRUE) #-2.164236 -1.630376
+
+
+Reactome_heatmap <- ggplot(hm_plot, aes(x = APNS, y = pathway_clean)) +
+  geom_point(shape = 21, size = 2, fill = "white", color = "grey75", stroke = 0.35) +
+  geom_point(aes(size = if_else(!is.na(padj) & padj <= 0.01, neglogFDR_cap, NA_real_),
+                 fill = if_else(!is.na(padj) & padj <= 0.01, NES, NA_real_)),
+             shape = 21, color = "grey20", stroke = 0.5, na.rm = TRUE) +
+
+  scale_size_area(name = "-log10(FDR)", 
+                  max_size = 8, 
+                  limits = c(2, 10), 
+                  breaks = c(2, 6, 10), 
+                  labels = c("2", "6", ">10")) +
+
+  scale_fill_gradient2(name = "NES\n(ED \u2192 6M)",
+                       low = "steelblue3", high = "skyblue2",
+                       midpoint = 0, na.value = "white", 
+                       limits = c(-2.25, 0),
+                       breaks = c(-2, 0)) +
+guides(fill = guide_colorbar(title.position = "top",
+                             title.hjust = 0.5,
+                             barheight = unit(2.25, "cm"),
+                             barwidth = unit(0.6, "cm"),
+                             title.theme = element_text(size = 11, margin = margin(b = 8)))) +
+  labs(y = "Reactome Pathways", x= NULL, title = NULL) + 
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major = element_line(linewidth = 0.5),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+
+    axis.text.x.top = element_text(color = "black", size = 12, angle = 35, hjust = 0, margin = margin(b = -22)),
+    axis.ticks.x.top = element_line(color = "black", linewidth = 0.5),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.title = element_blank(),
+
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.just = "center",
+    legend.title = element_text(size = 11, hjust = 0.5),
+    legend.text  = element_text(size = 11), 
+    legend.margin = margin(t = -5, r = 0, b = 0, l = 0), 
+    plot.margin = margin(t = 20, r = 5, b = 5, l = 5)) +
+  scale_y_discrete(expand = expansion(mult = c(.15, .15))) +
+  scale_x_discrete(position = "top", expand = expansion(mult = c(.075, .075))) 
+
+ggsave(filename = "FGSEA/REACTOME/Plots/Top REACTOMES by APNS 6-4 v2.jpg", plot = Reactome_heatmap,
+  height = 3.5, width = 7, dpi = 300)
+
+```
+
+## Combine 
+```{r}
+
+gobp_all <- gobp_all %>%
+  mutate(Database = "GO-BP")
+
+reactome_all <- reactome_all %>%
+  mutate(Database = "REACTOME")
+
+
+pathway_results <- rbind(gobp_all, reactome_all)
+
+pathway_results_export <- pathway_results %>%
+  dplyr::select(Database, APNS,`Recovery Group`, Class, pathway, pval, padj, log2err, ES, NES, size, leadingEdge) %>%
+  dplyr::rename(Pathway = pathway, 
+                `P Value` = pval, 
+                FDR = padj, 
+                Log2Err = log2err, 
+                `Pathway Size` = size,
+                `Leading Edge Genes` = leadingEdge) %>% 
+  mutate(across(where(is.numeric), ~ format_num(.x))) %>%
+  mutate(APNS = factor(APNS, levels = APNS_ordered), 
+         Class = factor(Class, levels = class_order)) %>%
+  arrange(APNS, Class)
+
+write.csv(pathway_results_export, "FGSEA/Combined_FGSEA_Results.csv")
+
+```
+
+
+

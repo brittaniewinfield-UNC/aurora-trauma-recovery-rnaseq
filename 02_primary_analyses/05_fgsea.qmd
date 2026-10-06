@@ -1,0 +1,377 @@
+---
+title: "FGSEA / GO Pathway Analysis"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 2407-2758 ---- -->
+
+# FGSEA 
+FGSEA was applied to domain-specific differential expression results to identify enriched biological processes and pathways associated with the recovered latent class across all APNS domains. Ranked gene statistics were generated per domain, enrichment was performed using GO:BP and Reactome gene sets, and significant pathways (FDR < 0.01) were aggregated and visualized to define shared vs domain-specific recovery programs.
+
+## Functions 
+Defines modular functions for constructing ranked gene lists (signed −log10 P) and performing FGSEA with standardized parameters across all APNS domains.
+```{r}
+# create ranked gene list per domain × class
+# uses ALL genes tested in respective DEA contrast, ranked by z.std here
+create_ranked_genes <- function(data) {
+  data %>%
+    dplyr::filter(!is.na(P.Value), !is.na(logFC)) %>%
+    dplyr::mutate(stat = sign(logFC) * -log10(P.Value)) %>%
+    dplyr::arrange(dplyr::desc(stat)) %>%
+    dplyr::select(Gene, stat) %>%
+    tibble::deframe()
+}
+
+# create ranked gene vector from DEA result
+create_ranked_genes <- function(data) {
+    data %>%
+        filter(!is.na(P.Value), !is.na(logFC), !is.na(Gene)) %>%
+        mutate(stat = (logFC) * -log10(P.Value)) %>%
+        arrange(desc(stat)) %>%
+        distinct(Gene, .keep_all = TRUE) %>%
+        dplyr::select(Gene, stat) %>%
+        deframe()
+}
+
+# fgsea function with seed 
+perform_fgsea <- function(ranked_genes, pathways) {
+  set.seed(819)
+  fgseaMultilevel(
+    pathways = pathways,
+    stats = ranked_genes,
+    minSize = 50,
+    maxSize = 500,
+    scoreType = "std")
+}
+
+```
+
+## GO analysis 
+Builds GO Biological Process gene sets from MSigDB, subsets domain- and class-specific DEA results, generates ranked gene statistics, performs FGSEA, and writes per-domain GO enrichment tables for the recovered class.
+```{r}
+
+# GO 
+GO_Biological_Processes_db <- msigdbr(
+  species = "Homo sapiens",
+  category = "C5",
+  subcategory = "GO:BP")
+
+GO_BP <- GO_Biological_Processes_db %>%
+  dplyr::group_by(gs_name) %>%
+  dplyr::summarise(genes = list(gene_symbol), .groups = "drop") %>%
+  tibble::deframe()
+
+GO_analysis <- function(data, APNS, recovered_groups) {
+
+  output_dir <- "FGSEA/GOBP/Results per APNS 7-2"
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+  recovered_class <- recovered_groups[[APNS]]
+
+  class_data <- data %>%
+    dplyr::filter(.data$APNS == !!APNS,
+                  Class == recovered_class)
+
+  ranked_genes <- create_ranked_genes(class_data)
+
+  fgsea_results <- perform_fgsea(ranked_genes, GO_BP) %>%
+    dplyr::mutate(
+      APNS = APNS,
+      Class  = recovered_class,
+      leadingEdge = sapply(leadingEdge, paste, collapse = ";")) %>%
+    dplyr::arrange(padj)
+
+  results_file <- file.path(output_dir,paste(APNS, recovered_class, "FGSEA_GOBP.csv", sep = "_"))
+
+  readr::write_csv(fgsea_results, results_file)
+}
+
+for (a in APNS_ordered) {
+  GO_analysis(all_DEA_results, a, recovered_groups)
+}
+```
+
+### Load in results
+```{r}
+gobp_dir <- "FGSEA/GOBP/Results per APNS 7-2"
+
+gobp_all <- list.files(
+  gobp_dir,
+  pattern = "FGSEA_GOBP\\.csv$",
+  full.names = TRUE) %>%
+  map_dfr(~ read_csv(.x, show_col_types = FALSE) %>%
+            mutate(source_file = basename(.x))) %>%
+  dplyr::mutate(
+    `Recovery Group` = dplyr::case_when(
+      Class == recovered_groups[APNS] ~ "Recovered",
+      Class == chronic_groups[APNS] ~ "Chronic",
+      TRUE ~ NA_character_
+    )
+  )
+
+gobp_sig_counts <- gobp_all %>%
+  filter(padj < 0.01) %>%
+  mutate(direction = case_when(
+    NES > 0 ~ "GOBPs Enriched at M6",
+    NES < 0 ~ "GOBPs Enriched at ED")) %>%
+  group_by(APNS, direction) %>%
+  summarise(n_pathways = n(), .groups = "drop") %>%
+  tidyr::pivot_wider(
+    names_from = direction,
+    values_from = n_pathways,
+    values_fill = 0) %>%
+  mutate(Total = `GOBPs Enriched at M6` + `GOBPs Enriched at ED`) %>%
+  arrange(match(APNS, APNS_ordered))
+
+#write.csv(gobp_sig_counts, "FGSEA/GOBP/Summaries/APNS Significant Go Biological Processes Global.csv")
+
+```
+
+### Export Excel 
+```{r}
+# workbook + styles
+gobp_wb <- createWorkbook()
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_center <- createStyle(halign = "center", valign = "center")
+body_left <- createStyle(halign = "left", valign = "center")
+
+
+gobp_all <- gobp_all %>%
+    mutate(APNS = factor(APNS, levels = APNS_ordered))
+
+gobp_summary <- gobp_all %>%
+  filter(padj < 0.01) %>%
+  group_by(pathway) %>%
+  summarise(
+    n_APNS_sig = n_distinct(APNS),
+    APNS_sig = paste(sort(unique(as.character(APNS))), collapse = ", "),
+    avg_pval = mean(pval, na.rm = TRUE),
+    avg_padj = mean(padj, na.rm = TRUE),
+    avg_log2err = mean(log2err, na.rm = TRUE),
+    avg_ES = mean(ES, na.rm = TRUE),
+    avg_NES = mean(NES, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_APNS_sig), avg_padj) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+write.csv(gobp_summary, "FGSEA/GOBP/Summaries/APNS GO Biological Processes Summary.csv")
+
+
+make_sheet_name <- function(name, existing) {
+  nm <- str_replace_all(name, "[:\\\\/*?\\[\\]]", "_")
+  nm <- substr(nm, 1, 31)
+
+  if (nm %in% existing) {
+    i <- 2
+    repeat {
+      nm2 <- substr(paste0(nm, "_", i), 1, 31)
+      if (!(nm2 %in% existing)) return(nm2)
+      i <- i + 1
+    }
+  }
+  nm
+}
+
+existing_sheets <- character(0)
+
+for (apns in levels(gobp_all$APNS)) {
+
+  df_sub <- gobp_all %>%
+    filter(APNS == apns) %>%
+    arrange(Class, padj, pval)
+
+  if (nrow(df_sub) == 0) next
+
+  df_sub <- df_sub %>%
+    mutate(across(where(is.numeric), ~ format_num(.x)), `Recovery Group` = "Recovered")
+
+  sheet_name <- make_sheet_name(as.character(apns), existing_sheets)
+  existing_sheets <- c(existing_sheets, sheet_name)
+
+  addWorksheet(gobp_wb, sheet_name)
+
+  writeData(gobp_wb, sheet = sheet_name, x = df_sub, withFilter = FALSE)
+
+  # header
+  addStyle(gobp_wb, sheet = sheet_name, style = header_style,
+           rows = 1, cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+  # body default (center)
+  addStyle(gobp_wb, sheet = sheet_name, style = body_center,
+           rows = 2:(nrow(df_sub) + 1), cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+  # left-align pathway + leadingEdge only
+  left_cols <- which(names(df_sub) %in% c("pathway", "leadingEdge"))
+    if (length(left_cols) > 0) {
+      addStyle(gobp_wb, sheet = sheet_name, style = body_left, rows = 2:(nrow(df_sub) + 1), 
+              cols = left_cols, gridExpand = TRUE, stack = TRUE)
+    }
+
+  setColWidths(gobp_wb, sheet = sheet_name, cols = 1:ncol(df_sub), widths = "auto")
+
+}
+
+saveWorkbook(gobp_wb, "FGSEA/GOBP/Summaries/All_APNS_GOBP_FGSEA.xlsx", overwrite = TRUE)
+```
+
+### Plot
+Aggregates significant GO terms across domains, computes pathway-level NES summaries, selects the top processes by absolute NES, and visualizes NES values for each APNS domain in a size-annotated heatmap.
+```{r}
+# identify GO:BP pathways significant across all 10 APNS
+gobp_pathways_keep <- gobp_all %>%
+  mutate(
+    padj = as.numeric(padj),
+    pathway_clean = gsub("^GOBP_", "", pathway)) %>%
+  filter(!is.na(padj) & padj <= 0.01) %>%
+  distinct(APNS, pathway_clean) %>%
+  count(pathway_clean, name = "n_APNS_sig") %>%
+  filter(n_APNS_sig >= 10) %>%
+  pull(pathway_clean)
+
+# rank only pathways significant across all 10 APNS
+top_gobp_pathways <- gobp_all %>%
+  mutate(
+    padj = as.numeric(padj),
+    NES = as.numeric(NES),
+    pathway_clean = gsub("^GOBP_", "", pathway)) %>%
+  filter(pathway_clean %in% gobp_pathways_keep) %>%
+  group_by(pathway_clean) %>%
+  summarise(
+    padj_mean = mean(padj, na.rm = TRUE),
+    NES_mean = mean(NES, na.rm = TRUE),
+    .groups = "drop") %>%
+  mutate(weighted_score = -log10(padj_mean) * abs(NES_mean)) %>%
+  arrange(desc(weighted_score)) %>%
+  slice_head(n = 15)
+
+pathway_levels <- top_gobp_pathways %>%
+  arrange(desc(weighted_score)) %>%
+  pull(pathway_clean)
+
+heatmap_gobp <- gobp_all %>%
+  mutate(
+    padj = as.numeric(padj),
+    NES  = as.numeric(NES),
+    APNS = factor(APNS, levels = APNS_ordered),
+    pathway_clean = gsub("^GOBP_", "", pathway)) %>%
+  filter(pathway_clean %in% pathway_levels) %>%
+  group_by(APNS, pathway_clean) %>%
+  summarise(
+    padj = min(padj, na.rm = TRUE),
+    NES = NES[which.min(padj)][1],
+    .groups = "drop") %>%
+  mutate(
+    APNS = factor(APNS, levels = rev(APNS_ordered)),
+    pathway_clean = factor(pathway_clean, levels = pathway_levels),
+    neglogFDR = if_else(!is.na(padj) & padj > 0, -log10(padj), NA_real_))
+
+heatmap_gobp_grid <- tidyr::crossing(
+  APNS = factor(APNS_ordered, levels = APNS_ordered),
+  pathway_clean = factor(pathway_levels, levels = pathway_levels)) %>%
+  left_join(heatmap_gobp, by = c("APNS", "pathway_clean"))
+
+gobp_pathway_labels <- rev(c(
+    NEUTROPHIL_MIGRATION = "Neutrophil migration",
+    GRANULOCYTE_MIGRATION = "Granulocyte migration",
+    MYELOID_LEUKOCYTE_ACTIVATION = "Myeloid leukocyte activation",
+    MYELOID_LEUKOCYTE_MIGRATION = "Myeloid leukocyte migration",
+    REGULATION_OF_INNATE_IMMUNE_RESPONSE = "Regulation of innate immune response",
+    POSITIVE_REGULATION_OF_INFLAMMATORY_RESPONSE = "Positive regulation of inflammatory response",
+    POSITIVE_REGULATION_OF_DEFENSE_RESPONSE = "Positive regulation of defense response",
+    INTERLEUKIN_1_PRODUCTION = "IL-1 production",
+    VESICLE_ORGANIZATION = "Vesicle organization",
+    POSITIVE_REGULATION_OF_RESPONSE_TO_EXTERNAL_STIMULUS = "Positive regulation of response to external stimulus",
+    POSITIVE_REGULATION_OF_RESPONSE_TO_BIOTIC_STIMULUS = "Positive regulation of response to biotic stimulus",
+    REGULATION_OF_RESPONSE_TO_BIOTIC_STIMULUS = "Regulation of response to biotic stimulus",
+    DEFENSE_RESPONSE_TO_BACTERIUM = "Defense response to bacterium",
+    RESPONSE_TO_BACTERIUM = "Response to bacterium",
+    RRNA_PROCESSING = "rRNA processing"))
+
+
+gobp_plot <- heatmap_gobp_grid %>%
+   mutate(pathway_clean = factor(
+    pathway_clean,
+     levels = names(gobp_pathway_labels),
+     labels = gobp_pathway_labels), 
+    APNS = factor(APNS, levels = APNS_ordered, labels = APNS_labels))
+
+gobp_plot <- gobp_plot %>%
+  mutate(neglogFDR = if_else(!is.na(padj) & padj > 0, -log10(padj), NA_real_),
+         neglogFDR_cap = pmin(neglogFDR, 10))
+
+range(gobp_plot$neglogFDR, na.rm = TRUE) #2.345234 9.321598
+range(gobp_plot$NES, na.rm = TRUE) # -1.873082  2.168416
+
+
+GOBP_heatmap <- ggplot(gobp_plot, aes(x = APNS, y = pathway_clean)) +
+  geom_point(shape = 21, size = 4, fill = "white", color = "grey75", stroke = 0.35) +
+  geom_point(aes(size = if_else(!is.na(padj) & padj <= 0.01, neglogFDR_cap, NA_real_),
+                 fill = if_else(!is.na(padj) & padj <= 0.01, NES, NA_real_)),
+             shape = 21, color = "grey20", stroke = 0.5, na.rm = TRUE) +
+
+  scale_size_area(name = "-log10(FDR)", 
+                  max_size = 10, 
+                  limits = c(2, 10), 
+                  breaks = c(2, 6, 10), 
+                  labels = c("2", "6", ">10"),
+                  guide = guide_legend(order = 1)) +
+
+  scale_fill_gradient2(name = "NES\n(ED \u2192 6M)",
+                       low = "#006A98", mid = "white", high = "#67B6B2",
+                       midpoint = 0, na.value = "white", 
+                       limits = c(-1.9, 2.2),
+                       breaks = c(-1.5, 0, 1.5)) +
+guides(fill = guide_colorbar(title.position = "top",
+                             title.hjust = 0.5,
+                             barheight = unit(2.25, "cm"),
+                             barwidth = unit(0.6, "cm"),
+                             title.theme = element_text(size = 11, margin = margin(b = 8)))) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major = element_line(linewidth = 0.5),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+
+    axis.text.x.top = element_text(color = "black", size = 12, angle = 35, hjust = 0, margin = margin(b = -20)),
+    axis.ticks.x.top = element_line(color = "black", linewidth = 0.5),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.title = element_blank(),
+
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.just = "center",
+    legend.title = element_text(size = 11, hjust = 0.5),
+    legend.text  = element_text(size = 11), 
+    legend.margin = margin(t = -5, r = 0, b = 0, l = 0), 
+    plot.margin = margin(t = 20, r = 5, b = 5, l = 5)) +
+  scale_y_discrete(expand = expansion(mult = c(.07, .07))) +
+  scale_x_discrete(position = "top", expand = expansion(mult = c(.05, .05))) 
+
+
+ggsave(filename = "Figures/Top GOBPs by APNS 7-2 v2.jpg", plot = GOBP_heatmap,
+  height = 4, width = 10 , dpi = 300)
+
+```
+
+

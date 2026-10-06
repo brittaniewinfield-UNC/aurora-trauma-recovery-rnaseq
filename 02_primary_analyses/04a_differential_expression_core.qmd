@@ -1,0 +1,887 @@
+---
+title: "Differential Expression Analysis (TMM scaling, global DEA, recovered DEG lists, downsampling)"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 782-1643 ---- -->
+
+# DIFFERENTIAL EXPRESSION ANALYSIS
+Longitudinal ED–6M differential expression analyses were performed separately within each APNS domain and latent class using dream/limma-voom. For each APNS × class subset, raw counts were filtered for low expression (filterByExpr, min.count = 3), normalized by TMM, and modeled with a linear mixed model including Timepoint (ED vs 6M) as a fixed effect and a random intercept for participant (PID). Empirical Bayes moderation was applied, and results were exported for all genes with logFC, moderated statistics, adjusted P-values, and mean voom-normalized expression at ED and 6M.
+
+## Examine TMM scaling 
+If the TMM scaling factors differ meaningfully acorss trajectories in each APNS, that suggests that global normalization may not be the best option and rather we should do within-class normalization. When comparing the TMM scaling factors across trajectories/classes for each APNS, the only APNS that had a nominally significant ANOVA was Pain. To keep consistency across analyses, global normalization was used for all APNS. 
+
+### Prepare data 
+```{r}
+
+tmm_dir <- "Differential Expression Analyses/TMM Scaling Factor Analysis"
+
+# Storage for all scaling factors
+all_tmm_factors <- list()
+
+for (APNS in APNS_ordered) {
+  
+  cat("\nProcessing APNS:", APNS, "\n")
+  
+  # All samples in this APNS
+  apns_metadata <- coldata[!is.na(coldata[[APNS]]), ]
+  apns_metadata$Timepoint <- relevel(factor(apns_metadata$Timepoint), ref = "ED")
+  apns_metadata$PID <- factor(apns_metadata$PID)
+  
+  # Subset count matrix
+  apns_counts <- count_matrix_t[, apns_metadata$INVENTORY.CODE, drop = FALSE]
+  
+  # Create DGEList and normalize jointly
+  dge_joint <- DGEList(counts = round(apns_counts), genes = rownames(apns_counts))
+  keep <- filterByExpr(dge_joint, group = apns_metadata$Timepoint, min.count = 3)
+  dge_joint <- dge_joint[keep, , keep.lib.sizes = FALSE]
+  dge_joint <- calcNormFactors(dge_joint)
+  
+  # Extract TMM norm factors and attach class labels
+  tmm_df <- data.frame(
+    INVENTORY.CODE = colnames(dge_joint),
+    TMM_factor     = dge_joint$samples$norm.factors,
+    lib_size       = dge_joint$samples$lib.size,
+    APNS           = APNS
+  )
+  
+  # Merge in class and timepoint info
+  tmm_df <- merge(tmm_df, 
+                  apns_metadata[, c("INVENTORY.CODE", "PID", "Timepoint", APNS)],
+                  by = "INVENTORY.CODE")
+  
+  colnames(tmm_df)[colnames(tmm_df) == APNS] <- "Class"
+  
+  all_tmm_factors[[APNS]] <- tmm_df
+}
+
+# Combine all APNS results
+tmm_combined <- do.call(rbind, all_tmm_factors)
+rownames(tmm_combined) <- NULL
+
+write.csv(tmm_combined, 
+          file.path(tmm_dir, "TMM_Scaling_Factors_All.csv"),
+          row.names = FALSE)
+
+
+# Summary statistics — mean and SD of TMM factors per APNS × class
+
+tmm_summary <- tmm_combined %>%
+  group_by(APNS, Class) %>%
+  summarise(
+    N_samples = n(),
+    Mean_TMM = round(mean(TMM_factor), 4),
+    SD_TMM = round(sd(TMM_factor), 4),
+    Median_TMM = round(median(TMM_factor), 4),
+    Min_TMM = round(min(TMM_factor), 4),
+    Max_TMM  = round(max(TMM_factor), 4),
+    Range_TMM = round(max(TMM_factor) - min(TMM_factor), 4),
+    .groups = "drop")
+
+write.csv(tmm_summary, file.path(tmm_dir, "TMM_Scaling_Factor_Summary.csv"), row.names = FALSE)
+
+```
+
+### Stats
+Statistical test — do TMM factors differ significantly across classes within each APNS?
+```{r}
+tmm_combined <- read.csv("Differential Expression Analyses/TMM Scaling Factor Analysis/TMM_Scaling_Factors_All.csv")
+
+anova_results <- list()
+
+for (APNS in APNS_ordered) {
+  
+  apns_data <- tmm_combined %>% filter(APNS == !!APNS)
+  
+  # Need at least 2 classes and enough samples
+  if (length(unique(apns_data$Class)) < 2) next
+  
+  # One-way ANOVA: do TMM factors differ by class?
+  fit <- aov(TMM_factor ~ Class, data = apns_data)
+  p_val <- summary(fit)[[1]][["Pr(>F)"]][1]
+  
+  # Effect size: eta-squared
+  ss_between <- summary(fit)[[1]][["Sum Sq"]][1]
+  ss_total   <- sum(summary(fit)[[1]][["Sum Sq"]])
+  eta_sq     <- round(ss_between / ss_total, 3)
+  
+  anova_results[[APNS]] <- data.frame(
+    APNS        = APNS,
+    F_statistic = round(summary(fit)[[1]][["F value"]][1], 3),
+    p_value     = round(p_val, 4),
+    eta_squared = eta_sq,
+    Significant = ifelse(p_val < 0.05, "Yes", "No")
+  )
+  
+  cat("\nAPNS:", APNS, "| ANOVA p =", round(p_val, 4), 
+      "| eta² =", eta_sq, "\n")
+}
+
+anova_df <- do.call(rbind, anova_results)
+rownames(anova_df) <- NULL
+
+write.csv(anova_df, file.path("Differential Expression Analyses/TMM Scaling Factor Analysis/TMM_ANOVA_Results.csv"),
+          row.names = FALSE)
+```
+
+## GLOBAL DEA
+```{r}
+RNA_counts <- RNA_seq_counts %>% dplyr::select(-PID)
+
+DEA_metadata <- metadata_RNA %>%
+  filter(INVENTORY.CODE %in% ED_M6_inventory_codes) %>%
+  dplyr::select(INVENTORY.CODE, PID, Timepoint, all_of(APNS_ordered))
+
+# Data prep 
+DEA_data <- merge(DEA_metadata, RNA_counts, by = "INVENTORY.CODE")
+
+rownames(DEA_data) <- DEA_data$INVENTORY.CODE
+coldata <- DEA_data[, 1:14]
+count_matrix <- DEA_data[, 15:ncol(DEA_data)]
+
+count_matrix_t <- t(count_matrix)
+colnames(count_matrix_t) <- rownames(count_matrix)
+
+coldata$PID <- factor(coldata$PID)
+coldata$Timepoint <- relevel(factor(coldata$Timepoint), ref = "ED")
+
+dim(count_matrix)
+
+dge_global <- DGEList(counts = round(count_matrix_t), genes = rownames(count_matrix_t))
+keep <- filterByExpr(dge_global, group = coldata$Timepoint, min.count = 3)
+dge_global <- dge_global[keep, , keep.lib.sizes = FALSE]
+dge_global <- calcNormFactors(dge_global)
+
+cat("Genes retained after global filtering:", nrow(dge_global), "\n")
+dim(dge_global) #12513, 490
+
+genes_tested_DEA <- rownames(dge_global)
+#write.csv(genes_tested_DEA, "Differential Expression Analyses/Summaries/Genes_Tested.csv")
+
+
+output_dir <- "Differential Expression Analyses/Results Per APNS Final"
+dir.create(output_dir, showWarnings = FALSE)
+
+all_results_global <- list()
+
+
+APNS_ordered 
+  
+param <- MulticoreParam(workers = detectCores())
+param <- SerialParam()
+
+for (APNS in APNS_ordered) {
+   
+   cat("\n============================\n")
+   cat("Processing APNS:", APNS, "\n")
+   cat("============================\n")
+   
+   classes <- unique(coldata[[APNS]][!is.na(coldata[[APNS]])])
+   
+   for (class in classes) {
+     
+     class_metadata <- coldata[!is.na(coldata[[APNS]]) & coldata[[APNS]] == class, ]
+     class_metadata$Timepoint <- relevel(factor(class_metadata$Timepoint), ref = "ED")
+     class_metadata$PID <- factor(class_metadata$PID)
+     
+     cat("  Processing class:", class, "| n =", nrow(class_metadata), "\n")
+     
+     if (nrow(class_metadata) < 10) {
+       cat("    Skipping — too few samples\n")
+       next
+     }
+     
+     # Subset the globally normalized DGEList — no recalculation ever
+     dge <- dge_global[, class_metadata$INVENTORY.CODE]
+     
+     form <- ~ Timepoint + (1 | PID)
+     
+     v   <- voomWithDreamWeights(dge, form, class_metadata, BPPARAM = param)
+     fit <- dream(v, form, class_metadata, BPPARAM = param)
+     fit <- eBayes(fit)
+     
+     res_class <- topTable(fit, coef = "TimepointM6", number = Inf, sort.by = "P")
+     res_class$APNS  <- APNS
+     res_class$Class <- class
+     res_class$Gene  <- rownames(res_class)
+     
+     res_class$Abs_logFC <- abs(res_class$logFC)
+     res_class$Direction <- ifelse(res_class$logFC > 0, "Higher at M6", "Higher at ED")
+     
+     ED_samples <- intersect(class_metadata$INVENTORY.CODE[class_metadata$Timepoint == "ED"],
+                             colnames(v$E))
+     M6_samples <- intersect(class_metadata$INVENTORY.CODE[class_metadata$Timepoint == "M6"],
+                             colnames(v$E))
+     
+     ED_means_df <- data.frame(Gene = rownames(v$E),
+                               ED_mean = rowMeans(v$E[, ED_samples, drop = FALSE], 
+                                                  na.rm = TRUE))
+     M6_means_df <- data.frame(Gene = rownames(v$E),
+                               M6_mean = rowMeans(v$E[, M6_samples, drop = FALSE], 
+                                                  na.rm = TRUE))
+     
+     res_class <- merge(res_class, ED_means_df, by = "Gene", all.x = TRUE)
+     res_class <- merge(res_class, M6_means_df, by = "Gene", all.x = TRUE)
+     
+     significant_genes     <- res_class[res_class$adj.P.Val < 0.01, ]
+     non_significant_genes <- res_class[res_class$adj.P.Val >= 0.01, ]
+     
+     significant_genes     <- significant_genes[order(-significant_genes$Abs_logFC), ]
+     non_significant_genes <- non_significant_genes[order(non_significant_genes$adj.P.Val), ]
+     
+     res_class <- rbind(significant_genes, non_significant_genes)
+     
+     res_class <- res_class[, c("Gene", "logFC", "Abs_logFC", "t", "B", "z.std",
+                                "P.Value", "adj.P.Val", "Direction",
+                                "AveExpr", "ED_mean", "M6_mean",
+                                "APNS", "Class")]
+     
+     num_cols <- sapply(res_class, is.numeric)
+     res_class[num_cols] <- lapply(res_class[num_cols], signif, digits = 3)
+     
+     write.csv(res_class,
+               file = paste0(output_dir, "/DEA_", APNS, "_XX_", class, ".csv"),
+               row.names = FALSE)
+     
+     all_results_global[[paste(APNS, class, sep = "_")]] <- res_class
+     
+     cat("    Done.\n")
+   }
+}
+```
+
+### Load in Results 
+Differential expression (DE) output files for all APNS domain × class contrasts were loaded from the results directory and merged into a unified results table. Each CSV file corresponds to a single ED–M6 longitudinal contrast, and the originating filename was retained to preserve traceability to the specific model run.
+
+Each DE result includes log2-CPM summaries generated by limma–voom (AveExpr, ED_mean, M6_mean). These values were back-transformed to estimated counts-per-million (CPM) using CPM = 2^log2CPM to facilitate interpretation of effect magnitudes. A weighted gene-level statistic was computed as
+Weighted_Score = Abs_logFC × (−log10(adj.P.Val))
+to jointly capture effect size and statistical significance.
+
+The final merged dataset contains, for every gene in every APNS domain × class model, the log2 fold-change, moderated statistics, multiple-testing adjusted p-values, log2-CPM means at ED and M6 (and their CPM back-transformations), and the assigned APNS domain and latent class.
+```{r}
+# directory of results 
+#de_results_dir <- "Differential Expression Analyses/Results per APNS/"  
+de_results_dir <- "Differential Expression Analyses/Results Per APNS Final/"  
+
+# list all CSV files in the directory
+de_files <- list.files(de_results_dir, pattern = "\\.csv$", full.names = TRUE)
+
+# read and merge all files into a single dataframe
+# add file name for traceability
+all_DEA_results <- purrr::map_dfr(de_files, function(file) {
+  df <- read_csv(file) %>%
+    mutate(File = basename(file))}) %>%
+  mutate(APNS = recode(as.character(APNS),
+                               "Loss" = "Depression"))
+
+dim(all_DEA_results) #387903, 15
+
+all_DEA_results$Weighted_Score <- (all_DEA_results$Abs_logFC*(-log10(all_DEA_results$adj.P.Val)))
+
+all_DEA_results <- all_DEA_results %>%
+  dplyr::rename(Avg_Log2CPM = AveExpr,
+                Avg_ED_Log2CPM = ED_mean,
+                Avg_6M_Log2CPM = M6_mean) %>%
+  # back transform the log2-CPM counts to just estimated CPM 
+  mutate(
+    Avg_CPM = 2^Avg_Log2CPM,
+    Avg_ED_CPM = 2^Avg_ED_Log2CPM,
+    Avg_M6_CPM = 2^Avg_6M_Log2CPM)
+
+
+colnames(all_DEA_results)
+# "Gene"           "logFC"          "Abs_logFC"      "t"              "B"             
+# "z.std"          "P.Value"        "adj.P.Val"      "Direction"      "Avg_Log2CPM"   
+# "Avg_ED_Log2CPM" "Avg_6M_Log2CPM" "APNS"           "Class"          "File"          
+# "Avg_CPM"        "Avg_ED_CPM"     "Avg_M6_CPM"  
+
+
+# Create the table of all_DEA_results genes and order APNS and Class
+all_DEA_results_full <- all_DEA_results %>%
+  mutate(
+    APNS = factor(APNS, levels = APNS_ordered),
+    Class = factor(Class, levels = class_order),
+    Recovery_Group = case_when(
+      as.character(Class) == recovered_groups[as.character(APNS)] ~ "Recovered",
+      as.character(Class) == chronic_groups[as.character(APNS)] ~ "Chronic",
+      TRUE ~ NA_character_),
+    Recovery_Group = factor(Recovery_Group, levels = c("Recovered", "Chronic"))) %>%
+  dplyr::select( APNS, Class, Recovery_Group, Gene, logFC, t, B, z.std, P.Value, adj.P.Val, Avg_Log2CPM, Avg_ED_Log2CPM, Avg_6M_Log2CPM, Direction) %>%
+  arrange(APNS, Class)
+
+
+#write.csv(all_DEA_results_full, "Differential Expression Analyses/Summaries/Comprehenseive Differential Expression Results.csv")
+
+# Create the table of all_DEA_results genes and order APNS and Class
+all_DEA_results_concise <- all_DEA_results %>%
+  mutate(
+    APNS = factor(APNS, levels = APNS_ordered),
+    Class = factor(Class, levels = class_order),
+    Recovery_Group = case_when(
+      as.character(Class) == recovered_groups[as.character(APNS)] ~ "Recovered",
+      as.character(Class) == chronic_groups[as.character(APNS)] ~ "Chronic",
+      TRUE ~ NA_character_),
+    Recovery_Group = factor(Recovery_Group, levels = c("Recovered", "Chronic"))) %>%
+  dplyr::select( APNS, Class, Gene, logFC, t, B, z.std, P.Value, adj.P.Val) %>%
+  arrange(APNS, Class, P.Value) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+#write.csv(all_DEA_results_concise, "Differential Expression Analyses/Summaries/Concise Differential Expression Results.csv")
+
+# Create the table of all_DEA_results genes and order APNS and Class
+all_DEA_results_concise_significant <- all_DEA_results %>%
+  mutate(
+    APNS = factor(APNS, levels = APNS_ordered),
+    Class = factor(Class, levels = class_order),
+    Recovery_Group = case_when(
+      as.character(Class) == recovered_groups[as.character(APNS)] ~ "Recovered",
+      as.character(Class) == chronic_groups[as.character(APNS)] ~ "Chronic",
+      TRUE ~ NA_character_),
+    Recovery_Group = factor(Recovery_Group, levels = c("Recovered", "Chronic"))) %>%
+  dplyr::select( APNS, Class, Gene, logFC, t, B, z.std, P.Value, adj.P.Val, Direction, Recovery_Group) %>%
+  arrange(APNS, Class, P.Value) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x))) %>%
+  filter(adj.P.Val < 0.01)
+
+#write.csv(all_DEA_results_concise_significant, "Differential Expression Analyses/Summaries/Significant Differential Expression Results.csv")
+
+
+
+  DEA_genes_tested <- table(all_DEA_results$APNS, all_DEA_results$Class)
+
+# Convert to dataframe
+DEA_genes_tested <- as.data.frame.matrix(DEA_genes_tested)
+
+# reorder columns
+DEA_genes_tested <- DEA_genes_tested[, c("Low", "Moderate Recovery", "Moderate", "High")]
+
+# reorder rows
+DEA_genes_tested <- DEA_genes_tested[c("Pain", "Avoidance", "Reexperience", "Hyperarousal","Anxious", "Somatic", "MentalFatigue", "Loss", "Nightmare", "Sleep"), ]
+
+write.csv(DEA_genes_tested, "Differential Expression Analyses/Summaries/Number of Genes Tested Across APNS.csv")
+
+# Create the table of all_DEA_results genes and order APNS and Class
+APNS_DEG_count <- all_DEA_results %>%
+    mutate(APNS = factor(APNS, levels = APNS_ordered),
+           Class = factor(Class, levels = class_order)) %>%
+    group_by(APNS, Class) %>%
+    summarize(Count_DEGS_FDR_0.05 = sum(adj.P.Val < 0.05, na.rm = TRUE),
+              Count_DEGS_FDR_0.01 = sum(adj.P.Val < 0.01, na.rm = TRUE),
+              Count_DEGS_FDR_0.001 = sum(adj.P.Val < 0.001, na.rm = TRUE),
+              .groups = 'drop') %>%
+    arrange(APNS, Class)
+
+write.csv(APNS_DEG_count, "Differential Expression Analyses/Summaries/DEG Counts Across APNS.csv")
+
+```
+
+### Export spreadsheet 
+```{r}
+
+all_DEA_results <- all_DEA_results %>%
+  mutate(across(where(is.numeric), format_num))
+
+DEA_wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_style   <- createStyle(halign = "center", valign = "center")
+
+apns_levels  <- c("Pain","Avoidance","Reexperience","Hyperarousal","Anxious",
+                  "Somatic","MentalFatigue","Loss","Nightmare","Sleep")
+
+class_levels <- c("Low","Moderate Recovery","Moderate","High")
+class_code <- c("Low"="L","Moderate Recovery"="MR","Moderate"="M","High"="H")
+
+make_sheet_name <- function(apns, cls, existing) {
+  nm <- substr(paste0(apns, " - ", class_code[[cls]]), 1, 31)
+
+  if (nm %in% existing) {
+    i <- 2
+    repeat {
+      nm2 <- substr(paste0(nm, "_", i), 1, 31)
+      if (!(nm2 %in% existing)) return(nm2)
+      i <- i + 1
+    }
+  }
+  nm
+}
+
+existing_sheets <- character(0)
+
+for (apns in apns_levels) {
+  for (cls in class_levels) {
+
+    df_sub <- all_DEA_results %>%
+      filter(APNS == apns, Class == cls) %>%
+      arrange(as.numeric(adj.P.Val), as.numeric(P.Value))
+    
+    df_sub <- all_DEA_results %>%
+      filter(APNS == apns, Class == cls) %>%
+      mutate(adjP_num = as.numeric(adj.P.Val),
+             abslogfc_num = as.numeric(Abs_logFC),
+             sig = adjP_num < 0.01) %>%
+      arrange(desc(sig),                                  
+              desc(if_else(sig, abslogfc_num, NA_real_)), 
+              if_else(!sig, adjP_num, Inf)) %>%
+      dplyr::select(-adjP_num, -abslogfc_num, -sig)
+
+    sheet_name <- make_sheet_name(apns, cls, existing_sheets)
+    existing_sheets <- c(existing_sheets, sheet_name)
+
+    addWorksheet(DEA_wb, sheet_name)
+    writeData(DEA_wb, sheet = sheet_name, x = df_sub, withFilter = FALSE)
+
+    addStyle(DEA_wb, sheet_name, header_style,
+             rows = 1, cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+    addStyle(DEA_wb, sheet_name, body_style,
+             rows = 2:(nrow(df_sub) + 1),
+             cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+    setColWidths(DEA_wb, sheet_name, cols = 1:ncol(df_sub), widths = "auto")
+  }
+}
+
+saveWorkbook(DEA_wb, "Differential Expression Analyses/Summaries/DEA_Results_All_APNS_Class.xlsx",
+  overwrite = TRUE)
+
+```
+
+## Recovered DEG lists 
+Differential expression results (all_DEA_results) were restricted to the recovered class for each APNS domain, defined using the domain-specific recovery mapping (Moderate Recovery for Pain and Avoidance; Low for all other APNS). Within this recovered subset, genes were considered differentially expressed if they met the threshold FDR < 0.01.
+
+For each APNS domain, the number of significant DEGs was recorded.
+
+A binary Gene × APNS matrix was constructed by marking each gene as significant (1) or not significant (0) per recovered APNS domain. Genes that were significant in all 10 APNS domains formed the shared recovered DEG set, representing transcripts consistently altered across all manifestations of recovery.
+
+A comprehensive recovered DEG set was also generated by taking the union of all genes significant in at least one recovered APNS domain (FDR < 0.01). For both shared and comprehensive gene sets, gene-level summaries were computed across recovered domains by averaging effect sizes and statistics (Abs_logFC, logFC, t-statistic, z-statistic, nominal and adjusted p-values, ED and M6 mean log2-CPM values, and the Weighted_Score).
+```{r}
+# subset to recovered contrasts only
+DEA_results_recovered <- all_DEA_results %>%
+  filter(
+    APNS %in% APNS_ordered,
+    Class == recovered_groups[APNS])
+
+# per-APNS DEG counts (FDR < 0.01) for recovered groups
+recovered_deg_summary <- DEA_results_recovered %>%
+  filter(adj.P.Val < 0.01) %>%
+  dplyr::count(APNS, Class, name = "N_DEGs") %>%
+  mutate(APNS = factor(APNS, levels = APNS_ordered)) %>%
+  arrange(APNS)
+
+
+# shared DEG list: genes significant in ALL 10 recovered APNS
+table(DEA_results_recovered$APNS)
+DEG_recovered_binary_matrix <- DEA_results_recovered %>%
+  filter(adj.P.Val < 0.01) %>%
+  distinct(Gene, APNS) %>%
+  mutate(Count = 1L) %>%
+  pivot_wider(
+    names_from  = APNS,
+    values_from = Count,
+    values_fill = 0) %>%
+  mutate(APNS_count = rowSums(across(-Gene)))
+
+shared_DEGs_list <- DEG_recovered_binary_matrix %>%
+  filter(APNS_count == 10) %>%
+  pull(Gene)
+
+length(shared_DEGs_list)  # 3574 DEGs shared across all 10 recovered APNS
+#write.csv(shared_DEGs_list, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS List.csv")
+
+# comprehensive DEG list: union across all recovered APNS 
+comprehensive_deg_list <- DEA_results_recovered %>%
+  filter(adj.P.Val < 0.01) %>%
+  distinct(Gene) %>%
+  pull(Gene)
+
+length(comprehensive_deg_list)  # 8545 DEGs in ≥1 recovered APNS domain
+
+
+# gene-level summaries (recovered-only & all contrasts) 
+DEA_results_recovered_shared_summary <- DEA_results_recovered %>%
+  filter(Gene %in% shared_DEGs_list) %>%
+  group_by(Gene) %>%
+  summarise(
+    across(c(Abs_logFC, logFC, t, z.std, P.Value, adj.P.Val, Avg_ED_Log2CPM, Avg_6M_Log2CPM, Weighted_Score),
+      ~ mean(.x, na.rm = TRUE),
+      .names = "Avg_{.col}"),
+      .groups = "drop") %>%
+  arrange(desc(Avg_Abs_logFC))
+
+#write.csv(DEA_results_recovered_shared_summary, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS Summary Stats.csv")
+
+
+# recovered contrasts only
+DEA_results_recovered_comp_summary <- DEA_results_recovered %>%
+  filter(Gene %in% comprehensive_deg_list) %>%
+  group_by(Gene) %>%
+  summarise(
+    across(c(Abs_logFC, logFC, t, z.std, P.Value, adj.P.Val, Avg_ED_Log2CPM, Avg_6M_Log2CPM, Weighted_Score),
+      ~ mean(.x, na.rm = TRUE),
+      .names = "Avg_{.col}"),
+      .groups = "drop") %>%
+  arrange(desc(Avg_Abs_logFC))
+
+DEA_results_recovered_summary <- DEA_results_recovered %>%
+  group_by(Gene) %>%
+  summarise(
+    across(c(Abs_logFC, logFC, t, z.std, P.Value, adj.P.Val, Avg_ED_Log2CPM, Avg_6M_Log2CPM, Weighted_Score),
+      ~ mean(.x, na.rm = TRUE),
+      .names = "Avg_{.col}"),
+      .groups = "drop") %>%
+  arrange(desc(Avg_Abs_logFC))
+```
+
+## DOWNSAMPLE DEA 
+Prep RNA 
+```{r}
+
+RNA_counts <- RNA_seq_counts %>% dplyr::select(-PID)
+
+DEA_metadata <- metadata_RNA %>%
+  filter(INVENTORY.CODE %in% ED_M6_inventory_codes) %>%
+  dplyr::select(INVENTORY.CODE, PID, Timepoint, all_of(APNS_ordered))
+
+# Data prep 
+DEA_data <- merge(DEA_metadata, RNA_counts, by = "INVENTORY.CODE")
+
+rownames(DEA_data) <- DEA_data$INVENTORY.CODE
+coldata <- DEA_data[, 1:14]
+count_matrix <- DEA_data[, 15:ncol(DEA_data)]
+
+count_matrix_t <- t(count_matrix)
+colnames(count_matrix_t) <- rownames(count_matrix)
+
+coldata$PID <- factor(coldata$PID)
+coldata$Timepoint <- relevel(factor(coldata$Timepoint), ref = "ED")
+
+dim(count_matrix)
+
+dge_global <- DGEList(counts = round(count_matrix_t), genes = rownames(count_matrix_t))
+keep <- filterByExpr(dge_global, group = coldata$Timepoint, min.count = 3)
+dge_global <- dge_global[keep, , keep.lib.sizes = FALSE]
+dge_global <- calcNormFactors(dge_global)
+
+dim(dge_global) #12513, 490
+```
+
+### Final Analysis 
+```{r}
+
+clean_filename <- function(x) {
+
+  x <- as.character(x)
+  x <- gsub("[^A-Za-z0-9_-]+", "_", x)
+  x <- gsub("_+","_", x)
+  x <- gsub("^_|_$", "",x)
+  x
+}
+
+iteration_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Iteration Results 8"
+
+run_paired_limma_iteration <- function(APNS, class, iteration, job_id, n_downsample, master_seed) {
+  
+  # File names
+  APNS_file <- clean_filename(APNS)
+  class_file <- clean_filename(class)
+
+  iteration_file <- file.path(
+    iteration_output_dir,
+    paste0("DEA_", APNS_file, "_XX_", class_file, "_Iteration_", sprintf("%02d", iteration),".csv"))
+
+  manifest_file <- file.path(manifest_output_dir, 
+                             paste0("Participants_", APNS_file, "_XX_", class_file, "_Iteration_", 
+                                    sprintf("%02d", iteration), ".csv"))
+
+  # Metadata for this APNS × class
+  class_metadata <- coldata %>%
+    as.data.frame() %>%
+    dplyr::filter(
+      !is.na(.data[[APNS]]),
+      as.character(.data[[APNS]]) == as.character(class),
+      as.character(Timepoint) %in% c("ED", "M6")) %>%
+    dplyr::mutate(
+      PID = as.character(PID),
+      Timepoint = as.character(Timepoint),
+      INVENTORY.CODE = as.character(INVENTORY.CODE))
+
+  # Identify complete ED-M6 pairs
+  eligible_PIDs <- class_metadata %>%
+    dplyr::group_by(PID) %>%
+    dplyr::pull(PID)
+
+  ## Randomly sample 20 participants
+  iteration_seed <- master_seed + (job_id * 1000) + iteration
+
+  set.seed(iteration_seed)
+  sampled_PIDs <- sample(eligible_PIDs, size = n_downsample, replace = FALSE)
+
+  ## Retain ED and M6 samples for selected participants
+  sampled_metadata <- class_metadata %>%
+    dplyr::filter(PID %in% sampled_PIDs)
+
+
+  ## Subset globally filtered / normalized DGEList
+
+  ## Important:
+  ## We do NOT rerun filterByExpr().
+  ## All iterations use the same gene universe.
+
+  dge <- dge_global[ , sampled_metadata$INVENTORY.CODE]
+
+  ## Align metadata exactly to expression columns
+  sampled_metadata <- sampled_metadata[match(colnames(dge), sampled_metadata$INVENTORY.CODE),
+                                       ,drop = FALSE]
+
+  ## Factor formatting
+  sampled_metadata$PID <- factor(sampled_metadata$PID)
+
+  sampled_metadata$Timepoint <- relevel(factor(sampled_metadata$Timepoint), ref = "ED")
+
+  ## Paired fixed-effect design
+  ##
+  ## PID controls for participant-specific baseline expression.
+  ## TimepointM6 therefore estimates within-participant ED→M6
+  ## expression change.
+  ## ----------------------------------------------------------
+
+  design <- model.matrix(~ PID + Timepoint, data = sampled_metadata)
+
+  ## voom
+  v <- limma::voom(dge, design, plot = FALSE)
+
+  ## limma
+  fit <- limma::lmFit(v, design)
+  fit <- limma::eBayes(fit, robust = TRUE)
+
+  ## Extract ED → M6 differential expression
+  res <- limma::topTable(fit, coef = "TimepointM6",
+                         number = Inf, sort.by = "P") %>%
+    tibble::rownames_to_column("Gene")
+
+  ## Mean normalized expression at ED and M6
+  ED_samples <- sampled_metadata$INVENTORY.CODE[sampled_metadata$Timepoint == "ED"]
+
+  M6_samples <- sampled_metadata$INVENTORY.CODE[sampled_metadata$Timepoint == "M6"]
+
+  expression_means <- tibble::tibble(
+    Gene = rownames(v$E),
+    ED_mean = rowMeans(v$E[, ED_samples, drop = FALSE], na.rm = TRUE),
+    M6_mean = rowMeans(v$E[, M6_samples, drop = FALSE], na.rm = TRUE))
+
+  ## Add analysis information
+  res <- res %>%
+    dplyr::left_join(expression_means, by = "Gene") %>%
+    dplyr::mutate(
+      APNS = APNS,
+      Class = as.character(class),
+      Iteration = iteration,
+      Seed = iteration_seed,
+      N_Participants = n_downsample,
+      N_Samples = nrow(sampled_metadata),
+      Abs_logFC = abs(logFC),
+      Direction = dplyr::if_else(logFC > 0, "Higher at M6", "Higher at ED"),
+      Significant_FDR_001 = adj.P.Val < 0.01,
+      Significant_FDR_005 = adj.P.Val < 0.05,
+      Significant_P_005 = P.Value < 0.05)
+
+  ## Arrange columns
+  res <- res %>%
+    dplyr::select(Gene, logFC, Abs_logFC, t, B, P.Value, adj.P.Val, Direction,
+                  Significant_FDR_001, Significant_FDR_005, Significant_P_005,
+                  AveExpr, ED_mean, M6_mean, APNS, Class, Iteration, Seed,
+                  N_Participants, N_Samples)
+  
+  
+  
+  # Calculate DEG counts BEFORE cleaning objects
+  n_DEG_005 <- sum(res$adj.P.Val < 0.05, na.rm = TRUE)
+  n_DEG_001 <- sum(res$adj.P.Val < 0.01, na.rm = TRUE)
+  n_Higher_ED_005 <- sum(res$adj.P.Val < 0.05 & res$logFC < 0, na.rm = TRUE)
+  n_Higher_M6_005 <- sum(res$adj.P.Val < 0.05 & res$logFC > 0, na.rm = TRUE)
+  
+  # Participant manifest
+  participant_manifest <- sampled_metadata %>%
+      dplyr::transmute(
+        APNS = APNS,
+        Class = as.character(class),
+        Iteration = iteration,
+        Seed = iteration_seed,
+        PID = as.character(PID),
+        INVENTORY.CODE = as.character(INVENTORY.CODE),
+        Timepoint = as.character(Timepoint)) %>%
+      dplyr::arrange(PID, factor(Timepoint, levels = c("ED", "M6")))
+  
+  # Save outputs
+  readr::write_csv(res, iteration_file)
+  readr::write_csv(participant_manifest, manifest_file)
+  
+  # Clean memory
+  rm(dge, v, fit, sampled_metadata)
+  gc(verbose = FALSE)
+  
+  # Return only a lightweight summary
+    invisible(
+      tibble::tibble(
+        APNS = APNS,
+        Class = as.character(class),
+        Iteration = iteration,
+        Seed = iteration_seed,
+        N_Participants = n_downsample,
+        N_DEGs_FDR_005 = n_DEG_005,
+        N_DEGs_FDR_001 = n_DEG_001,
+        N_Higher_ED_FDR_005 = n_Higher_ED_005,
+        N_Higher_M6_FDR_005 = n_Higher_M6_005
+      )
+    )
+  }
+
+
+n_downsample <- 20
+n_iterations <- 10
+master_seed <- 0307
+
+iteration_job_grid <- purrr::map_dfr(APNS_ordered,
+  function(APNS) {
+
+    classes <- unique(as.character(coldata[[APNS]][!is.na(coldata[[APNS]])]))
+
+    tidyr::crossing(
+      APNS = APNS,
+      Class = classes,
+      Iteration = seq_len(n_iterations))}) %>%
+  dplyr::mutate(Job_ID = dplyr::row_number())
+
+iteration_job_grid
+nrow(iteration_job_grid)
+
+all_iteration_summaries <- vector("list", nrow(iteration_job_grid))
+
+for (i in seq_len(nrow(iteration_job_grid))) {
+
+  job <- iteration_job_grid[i, ]
+
+  cat("Job ", i, " / ", nrow(iteration_job_grid), "\n", sep = "")
+
+  all_iteration_summaries[[i]] <- run_paired_limma_iteration(
+    APNS = job$APNS,
+    class = job$Class,
+    iteration = job$Iteration,
+    job_id = job$Job_ID,
+    n_downsample = n_downsample,
+    master_seed = master_seed)
+}
+
+iteration_DEG_counts <- dplyr::bind_rows(all_iteration_summaries)
+
+
+iteration_DEG_counts
+```
+
+### Heatmap 
+```{r}
+iteration_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Iteration Results Final"
+
+# Get all iteration result files
+iteration_files <- list.files(iteration_output_dir, pattern = "\\.csv$", full.names = TRUE)
+
+length(iteration_files) # 10
+
+iteration_DEG_counts <- purrr::map_dfr(
+  iteration_files,
+  function(file) {
+
+    x <- readr::read_csv(file)
+
+    x %>%
+      dplyr::summarise(
+        APNS = dplyr::first(APNS),
+        Class = dplyr::first(Class),
+        Iteration = dplyr::first(Iteration),
+        Seed = dplyr::first(Seed),
+        N_Participants = dplyr::first(N_Participants),
+        N_DEGs_FDR_005 = sum(adj.P.Val < 0.05, na.rm = TRUE),
+        N_DEGs_FDR_001 = sum(adj.P.Val < 0.01, na.rm = TRUE),
+        N_Higher_ED_FDR_005 = sum(adj.P.Val < 0.05 & logFC < 0, na.rm = TRUE),
+        N_Higher_M6_FDR_005 = sum(adj.P.Val < 0.05 & logFC > 0, na.rm = TRUE))
+  }
+)
+
+
+downsample_heatmap_data <- iteration_DEG_counts %>%
+  group_by(APNS,Class) %>%
+  summarise(
+    N_Iterations = n(),
+    Median_DEGs_FDR_005 = median(N_DEGs_FDR_005, na.rm = TRUE),
+    Mean_DEGs_FDR_005 = mean(N_DEGs_FDR_005, na.rm = TRUE),
+    Min_DEGs_FDR_005 = min(N_DEGs_FDR_005, na.rm = TRUE),
+    Max_DEGs_FDR_005 = max(N_DEGs_FDR_005, na.rm = TRUE),
+    .groups = "drop")
+
+heatmap_data <- downsample_heatmap_data %>%
+  mutate(APNS = factor(APNS, levels = (APNS_ordered), labels = APNS_labels),
+         Class = factor(Class, levels = class_order),
+         log_median_DEGs = log10(Median_DEGs_FDR_005 + 1),
+         Median_Label = if_else(Median_DEGs_FDR_005 %% 1 == 0,
+                                scales::comma(as.integer(Median_DEGs_FDR_005)),
+      scales::comma(Median_DEGs_FDR_005, accuracy = 1)))
+
+deg_fill_scale <- scale_fill_gradientn(
+  name = "Median DEGs\nFDR < 0.05",
+  colours = c(
+    "#F0F5F6",
+    "#B3D5DC",
+    "#5799B2",
+    "#006A98"
+  ),
+  limits = c(0, 2600),
+  breaks = c(0, 500, 1000, 1500, 2000, 2500)
+)
+
+
+
+p_downsample_heatmap <- ggplot(heatmap_data, aes(x = Class, y = APNS, fill = Median_DEGs_FDR_005)) +
+  geom_tile(color = "black", linewidth = 0.3) +
+  geom_text(aes(label = Median_Label), size = 3) +
+  deg_fill_scale +
+  scale_y_discrete(limits = rev) +
+  scale_x_discrete(position = "top") +
+  labs(x = NULL,y = NULL) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x.top = element_text(angle = 25, hjust = 0, vjust = 0, size = 11,color =  "black"),
+    axis.text.y = element_text(color = "black", size = 11),
+    plot.title = element_text(face = "bold"),
+    legend.title = element_text( color = "black", size = 11, hjust = 0.5, vjust = 1), 
+    legend.text = element_text(color = "black", size = 11))
+
+p_downsample_heatmap
+
+ggsave(p_downsample_heatmap, filename = "Figures/Ext Data Fig 2 - Supplementary_DEA_Heatmap.jpg", width = 4.5, height = 4, dpi = 300)
+
+
+```
+
+
+
+
+

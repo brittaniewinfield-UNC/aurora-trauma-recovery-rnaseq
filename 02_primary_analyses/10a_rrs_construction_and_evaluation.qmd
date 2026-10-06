@@ -1,0 +1,846 @@
+---
+title: "RNA-based Recovery Score (RRS): Construction and Evaluation"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 5010-5830 ---- -->
+
+# RNA-BASED RECOVERY SCORE
+
+## Create participant-level longitudinal log2FC matrix 
+Paired ED and 6-month (M6) RNA-seq expression data were aligned to longitudinal participant metadata. Expression values for the 3,574 recovery-associated DEGs shared across APNS analyses were extracted and reshaped into paired ED and M6 measurements for each participant. Longitudinal log2 fold-changes (M6 − ED) were then calculated on a per-gene basis, generating a participant × gene log2FC matrix representing individual-level transcriptional changes over time. This matrix served as the input feature space for all downstream RNA-based Recovery Score (RRS) modeling analyses. ED-level participant metadata were subsequently aligned to the matrix rows for phenotype assignment and downstream modeling.
+```{r}
+# prepare metadata
+metadata_RRS <- metadata_RNA_paired %>%
+  mutate(PID = as.character(PID))
+
+# attach RNA expression to paired metadata structure
+RRS_RNA_log2 <- RNA_seq_log2 %>%
+  mutate(PID = as.character(PID)) %>%
+  right_join(
+    metadata_RRS %>% dplyr::select(INVENTORY.CODE, PID, Timepoint),
+    by = c("PID", "INVENTORY.CODE")) %>%
+  dplyr::select(-dplyr::any_of("X")) %>%
+  dplyr::select(INVENTORY.CODE, PID, Timepoint, dplyr::everything())
+
+dim(RRS_RNA_log2) # 490 x 19907
+
+length(shared_DEGs_list) # 3574
+
+# keep only tested genes
+RRS_RNA_log2_filt <- RRS_RNA_log2 %>%
+  dplyr::select(INVENTORY.CODE, all_of(shared_DEGs_list))
+
+# attach tested-gene expression back to metadata
+RRS_RNA_meta <- metadata_RRS %>%
+  left_join(RRS_RNA_log2_filt, by = "INVENTORY.CODE")
+
+# one row per PID x gene, with ED and M6 expression in separate columns
+expression_by_timepoint <- RRS_RNA_meta %>%
+  dplyr::select(PID, Timepoint, all_of(shared_DEGs_list)) %>%
+  pivot_longer(
+    cols = all_of(shared_DEGs_list),
+    names_to = "Gene",
+    values_to = "Expression") %>%
+  pivot_wider(
+    names_from = Timepoint,
+    values_from = Expression) %>%
+  mutate(log2FC = M6 - ED)
+
+# reshape to participant x gene matrix
+log2fc_per_gene <- expression_by_timepoint %>%
+  dplyr::select(PID, Gene, log2FC) %>%
+  pivot_wider(names_from = Gene, values_from = log2FC)
+
+log2FC_matrix <- log2fc_per_gene %>%
+  column_to_rownames("PID") %>%
+  as.matrix()
+
+dim(log2FC_matrix) # 245 x 3574
+
+# prepare modeling metadata aligned to matrix rows
+metadata_model <- metadata_RRS %>%
+  filter(Timepoint == "ED") %>%
+  filter(PID %in% rownames(log2FC_matrix)) %>%
+  arrange(match(PID, rownames(log2FC_matrix)))
+
+# alignment checks
+(nrow(metadata_model) == nrow(log2FC_matrix)) # true
+(all(metadata_model$PID == rownames(log2FC_matrix))) # true 
+```
+
+## Define extreme recovery and chronic APNS phenotypes
+To define extreme recovery phenotypes across APNS domains, the number of recovered and chronic trajectory assignments was calculated for each participant across the ten APNS latent class outcomes. Multiple threshold combinations were evaluated to assess cohort balance, overlap between groups, and the distribution of intermediate participants. Because chronic APNS are highly comorbid following traumatic stress exposure, more permissive thresholds were used for chronic classifications relative to recovery classifications. Final thresholds were selected to balance biological stringency with sufficient sample sizes for downstream modeling analyses. Participants were classified as “Recovered_extreme” if they belonged to the recovery trajectory for at least seven APNS and were not classified as chronic in two or more domains. Participants were classified as “Chronic_extreme” if they belonged to chronic trajectories in at least two APNS and were not classified as recovered in seven or more domains. All remaining participants were classified as “Intermediate.”
+```{r}
+apns_counts <- metadata_model %>%
+  rowwise() %>%
+  mutate(
+    n_recovered = sum(
+      c_across(all_of(APNS_ordered)) == recovered_groups[APNS_ordered],
+      na.rm = TRUE),
+    n_chronic = sum(
+      c_across(all_of(APNS_ordered)) == chronic_groups[APNS_ordered],
+      na.rm = TRUE)) %>%
+  ungroup() %>%
+  dplyr::select(PID, n_recovered, n_chronic)
+
+threshold_grid <- expand.grid(
+  recovered_thresh = 4:9,
+  chronic_thresh = 2:7)
+
+threshold_results <- threshold_grid %>%
+  rowwise() %>%
+  mutate(
+    n_recovered = sum(apns_counts$n_recovered >= recovered_thresh),
+    n_chronic = sum(apns_counts$n_chronic >= chronic_thresh),
+    overlap = sum(
+      apns_counts$n_recovered >= recovered_thresh &
+      apns_counts$n_chronic >= chronic_thresh),
+    intermediates = nrow(apns_counts) - (n_recovered + n_chronic - overlap)) %>%
+  ungroup() %>%
+  arrange(desc(n_recovered + n_chronic))
+
+write.csv(threshold_results, "RNA-based Recovery Score Final/Binary_Outcome_Threshold_Grid_Results.csv")
+
+metadata_extreme <- metadata_model %>%
+  left_join(apns_counts, by = "PID") %>%
+  mutate(
+    Extreme_Group = case_when(
+      n_recovered >= 7 & n_chronic < 2 ~ "Recovered_extreme",
+      n_chronic >= 2 & n_recovered < 7 ~ "Chronic_extreme",
+      TRUE ~ "Intermediate"))
+
+metadata_extreme %>%
+  dplyr::count(Extreme_Group)
+```
+
+## Monte Carlo elastic net modeling
+
+### Create train and holdout cohorts
+The extreme phenotype cohort was subset to participants classified as either “Recovered_extreme” or “Chronic_extreme.” These groups were encoded as a binary outcome, with recovered participants coded as 1 and chronic participants coded as 0. The corresponding participant-level log2FC matrix was then subset to these extreme phenotype participants. A stratified 80/20 split was performed to create a training cohort and an independent holdout cohort while preserving recovery/chronic class balance. The holdout cohort was excluded from model training and feature selection and was retained only for downstream internal validation.
+```{r}
+extreme_idx <- which(metadata_extreme$Extreme_Group %in% c("Recovered_extreme", "Chronic_extreme"))
+
+metadata_extreme_only <- metadata_extreme[extreme_idx, ] %>%
+  mutate(Extreme_Binary = ifelse(Extreme_Group == "Recovered_extreme", 1L, 0L))
+
+X_extreme_all <- log2FC_matrix[extreme_idx, , drop = FALSE]
+y_extreme_all <- metadata_extreme_only$Extreme_Binary
+PID_extreme_all <- metadata_extreme_only$PID
+
+# stratified 20% holdout from extreme samples
+set.seed(727)
+holdout_rel_idx <- createDataPartition(y = y_extreme_all, p = 0.80, list = FALSE)[, 1]
+
+train_idx <- holdout_rel_idx
+holdout_idx <- setdiff(seq_len(nrow(X_extreme_all)), train_idx)
+
+X_train <- X_extreme_all[train_idx, , drop = FALSE]
+y_train <- y_extreme_all[train_idx]
+PID_train <- PID_extreme_all[train_idx]
+
+# HOLDOUT (NOT PART OF THE MODEL!)
+X_holdout <- X_extreme_all[holdout_idx, , drop = FALSE]
+y_holdout <- y_extreme_all[holdout_idx]
+PID_holdout <- PID_extreme_all[holdout_idx]
+
+table(y_train)
+# 0 = 64 
+# 1 = 79
+
+table(y_holdout)
+# 0 = 18 
+# 1 = 17 
+
+# INTERMEDIATE PHENOTYPE (NOT PART OF THE MODEL!)
+intermediate_idx <- which(metadata_extreme$Extreme_Group == "Intermediate")
+X_intermediate <- log2FC_matrix[intermediate_idx, , drop = FALSE]
+PID_intermediate <- metadata_extreme$PID[intermediate_idx]
+```
+
+### Evaluate training and holdout cohort distributions
+Split labels were added back to the extreme phenotype metadata to summarize the distribution of recovery/chronic groups and key demographic variables across the training and holdout cohorts. Class balance, sex distribution, and race distribution were evaluated to confirm that the stratified split produced comparable groups for downstream modeling and internal validation. Participants classified as “Intermediate” were also retained separately and projected onto the final RRS after model training, but were not included in elastic net feature selection.
+```{r}
+metadata_extreme$Split <- NA_character_
+
+metadata_extreme$Split[train_idx] <- "Train"
+metadata_extreme$Split[holdout_idx] <- "Holdout"
+metadata_extreme$Split[intermediate_idx] <- "Intermediate"
+
+
+metadata_extreme$Split <- factor(
+  metadata_extreme$Split,
+  levels = c("Train", "Holdout", "Intermediate"))
+
+table(metadata_extreme$Split, metadata_extreme$Extreme_Group)
+
+RRS_metadata_comparison <- metadata_extreme %>%
+  group_by(Split) %>%
+  summarise(
+    n = n(),
+    prop_female = mean(Gender == "Female", na.rm = TRUE),
+    prop_male = mean(Gender == "Male", na.rm = TRUE),
+    prop_white = mean(Race == "White", na.rm = TRUE),
+    prop_black = mean(Race == "Black", na.rm = TRUE), 
+    prop_other = mean (Race == "Other", na.rm = TRUE))
+
+write.csv(RRS_metadata_comparison, "RNA-based Recovery Score Final/Metadata_Train_Test_Intermediate_Cohorts.csv")
+
+metadata_extreme_only %>%
+  dplyr::count(Split, Extreme_Group, Gender)
+
+
+```
+
+### Run Monte Carlo elastic net modeling
+Elastic net modeling was performed in the training cohort to identify longitudinal transcriptional features that distinguished extreme recovery from chronic APNS outcomes. Across 20 Monte Carlo outer splits, a stratified 80% subsample of the training cohort was selected and used for bootstrap-based model fitting. Within each outer split, 50 balanced bootstrap samples were generated by resampling equal numbers of recovered and chronic participants with replacement. For each bootstrap iteration, a binomial elastic net model was fit using 10-fold cross-validation, with α = 0.1 and λ selected as lambda.1se. Nonzero gene coefficients were retained from each bootstrap model. Gene-level selection frequency and average nonzero coefficients were then summarized within each outer split and exported for downstream stability selection.
+```{r}
+B <- 20
+K <- 50
+train_frac <- 0.8
+alpha_param <- 0.1
+base_seed <- 918
+
+stab_coeffs_all <- vector("list", B)
+split_stability_all <- vector("list", B)
+
+for (b in seq_len(B)) {
+
+  cat("-- Outer split ", b, " of ", B, " --")
+
+  set.seed(base_seed + b)
+
+  outer_sub_idx <- createDataPartition(y = y_train, p = train_frac, list = FALSE)[, 1]
+
+  X_outer <- X_train[outer_sub_idx, , drop = FALSE]
+  y_outer <- y_train[outer_sub_idx]
+
+  rec_idx <- which(y_outer == 1L)
+  chr_idx <- which(y_outer == 0L)
+  n_per_class <- min(length(rec_idx), length(chr_idx))
+
+  boot_coefs_split <- vector("list", K)
+
+  for (k in seq_len(K)) {
+
+    set.seed(base_seed + b * 1000 + k)
+
+    boot_rec <- sample(rec_idx, size = n_per_class, replace = TRUE)
+    boot_chr <- sample(chr_idx, size = n_per_class, replace = TRUE)
+    boot_idx <- sample(c(boot_rec, boot_chr))
+
+    X_boot <- X_outer[boot_idx, , drop = FALSE]
+    y_boot <- y_outer[boot_idx]
+
+    cv_fit <- cv.glmnet(x = X_boot, y = y_boot, family = "binomial", alpha = alpha_param, nfolds = 10,
+                        type.measure = "deviance", standardize = TRUE)
+
+    fit <- glmnet(x = X_boot, y = y_boot, family = "binomial", alpha = alpha_param,
+                  lambda = cv_fit$lambda.1se, standardize = TRUE)
+
+    coef_df <- tibble(Gene = rownames(as.matrix(coef(fit))),
+                      Coefficient = as.numeric(as.matrix(coef(fit))[, 1])) %>%
+               filter(Gene != "(Intercept)", Coefficient != 0)
+
+    boot_coefs_split[[k]] <- coef_df
+  }
+
+  boot_selected_df <- bind_rows(
+    lapply(seq_along(boot_coefs_split), function(i) {
+      tibble(Bootstrap = i,
+             Gene = boot_coefs_split[[i]]$Gene)}))
+
+  split_stability_df <- boot_selected_df %>%
+    dplyr::count(Gene, name = "Times_Selected") %>%
+    mutate(Proportion_Selected = Times_Selected / K,
+           Outer_Split = b) %>%
+    dplyr::select(Outer_Split, everything())
+
+  split_stability_all[[b]] <- split_stability_df
+
+  stab_coeffs_all[[b]] <- bind_rows(boot_coefs_split) %>%
+    group_by(Gene) %>%
+    summarise(Mean_Beta = mean(Coefficient, na.rm = TRUE),
+              Nonzero_Fits = n(), .groups = "drop") %>%
+    mutate(Outer_Split = b)
+}
+
+split_stability_all_df <- bind_rows(split_stability_all)
+stab_coeffs_all_df <- bind_rows(stab_coeffs_all)
+
+write.csv(split_stability_all_df, "RNA-based Recovery Score Final/All_Split_Gene_Selections.csv")
+write.csv(stab_coeffs_all_df, "RNA-based Recovery Score Final/stab_coeffs_all_df_20260507.csv")
+saveRDS(stab_coeffs_all, "RNA-based Recovery Score Final/stab_coeffs_all_20260507.rds")
+
+full_model_results <- split_stability_all_df %>%
+  left_join(stab_coeffs_all_df, by = c("Gene", "X", "Outer_Split")) %>%
+  dplyr::select(Outer_Split, Gene, Mean_Beta, Nonzero_Fits, Proportion_Selected) %>%
+  dplyr::rename(Nonzero_Fits_Proportion = Proportion_Selected) 
+
+write.csv(full_model_results, "RNA-based Recovery Score Final/Full_RRS_Model_Results.csv")
+
+```
+
+### Select stable RRS genes 
+Gene stability was evaluated across bootstrap iterations and Monte Carlo outer splits. Within each outer split, genes were considered stable if they were selected in at least 50% of bootstrap elastic net models. Threshold sensitivity analyses were then performed across combinations of within-split and outer-split stability thresholds to evaluate how threshold selection influenced the size of the resulting gene signature. Lower thresholds produced substantially larger signatures, whereas more stringent thresholds rapidly reduced the number of retained genes. A within-split stability threshold of 50% combined with an outer-split stability threshold of 40% produced a final 46-gene signature and was selected for downstream analyses. Genes meeting both stability criteria were retained as the final RRS gene set.
+```{r}
+split_stability_all_df <- read.csv("RNA-based Recovery Score Final/split_stability_all_df_20260507.csv")
+stab_coeffs_all_df <- read.csv("RNA-based Recovery Score Final/stab_coeffs_all_df_20260507.csv")
+
+
+within_split_threshold_grid <- tibble(within_split_thresh = c(0.3, 0.4, 0.5, 0.6, 0.7))
+
+within_split_threshold_summary <- bind_rows(
+  lapply(within_split_threshold_grid$within_split_thresh, function(thresh) {
+    split_stability_all_df %>%
+      filter(Proportion_Selected >= thresh) %>%
+      dplyr::count(Outer_Split, name = "n_stable_genes") %>%
+      mutate(within_split_thresh = thresh)}))
+
+# threshold grid
+threshold_grid <- expand.grid(
+  within_split_thresh = c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
+  outer_split_thresh = c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9))
+
+# evaluate final gene counts across threshold combinations
+threshold_gene_counts <- threshold_grid %>%
+  rowwise() %>%
+  mutate(n_genes = {
+    split_stable_genes <- split_stability_all_df %>%
+        filter(Proportion_Selected >= within_split_thresh)
+    
+    outer_stability <- split_stable_genes %>%
+        dplyr::count(Gene, name = "Stable_Splits") %>%
+        mutate(Proportion_Outer_Stable = Stable_Splits / B)
+    
+    sum(outer_stability$Proportion_Outer_Stable >= outer_split_thresh)}) %>%
+  ungroup() %>%
+  pivot_wider(
+    names_from = outer_split_thresh,
+    values_from = n_genes,
+    names_prefix = "outer_")
+
+write.csv(threshold_gene_counts, "RNA-based Recovery Score Final/Stable_Gene_Threshold_Grid_Results.csv")
+
+# final stability thresholds
+within_split_thresh <- 0.5
+outer_split_thresh <- 0.4
+
+# retain genes stable within outer splits
+split_stable_genes_df <- split_stability_all_df %>%
+  filter(Proportion_Selected >= within_split_thresh)
+
+# summarize stability across outer splits
+outer_stability_df <- split_stable_genes_df %>%
+  dplyr::count(Gene, name = "Stable_Splits") %>%
+  mutate(Proportion_Outer_Stable = Stable_Splits / B) %>%
+  arrange(desc(Proportion_Outer_Stable))
+
+# final stable RRS genes
+final_stable_genes <- outer_stability_df %>%
+  filter(Proportion_Outer_Stable >= outer_split_thresh) %>%
+  pull(Gene)
+
+length(final_stable_genes) # 46
+
+#write.csv(final_stable_genes, "RNA-based Recovery Score v2/Genes Selected for RRS (46).csv")
+
+#final_stable_genes_46 <- final_stable_genes
+
+
+gene_selection_summary <- split_stability_all_df %>%
+  group_by(Gene) %>%
+  summarise(
+
+    Within_Split_Selected =
+      sum(Times_Selected, na.rm = TRUE),
+
+    Outer_Splits_Selected =
+      sum(Proportion_Selected >= within_split_thresh),
+
+    Proportion_Outer_Stable =
+      Outer_Splits_Selected / B,
+
+    .groups = "drop") %>%
+  mutate(Final_RRS_Gene = Proportion_Outer_Stable >= outer_split_thresh) %>%
+  arrange(desc(Proportion_Outer_Stable), desc(Within_Split_Selected))
+
+write.csv(gene_selection_summary, "RNA-based Recovery Score Final/All_Gene_Input_Selection_Summary.csv")
+
+
+RRS_direction_df <- DEA_results_recovered_shared_summary %>%
+  dplyr::filter(Gene %in% final_stable_genes) %>%
+  dplyr::mutate(
+    Expression_Direction = dplyr::case_when(
+      Avg_logFC > 0 ~ "Higher_6M",
+      Avg_logFC < 0 ~ "Higher_ED",
+      TRUE ~ "No_change")) %>%
+  dplyr::arrange(Expression_Direction)
+
+write.csv(RRS_direction_df, "RNA-based Recovery Score Final/Selected_Stable_Genes(46)_Summarized_DEA_Stats.csv")
+
+RRS_up_6M <- RRS_direction_df %>%
+  dplyr::filter(Expression_Direction == "Higher_6M") %>%
+  dplyr::pull(Gene)
+
+length(RRS_up_6M) # 26
+
+RRS_up_ED <- RRS_direction_df %>%
+  dplyr::filter(Expression_Direction == "Higher_ED") %>%
+  dplyr::pull(Gene)
+
+length(RRS_up_ED) # 20
+
+
+```
+
+### Construct the RRS
+Average elastic net coefficients were calculated across outer splits for genes retained following stability selection. These aggregated coefficients were used to generate a locked beta vector representing the final RRS gene signature. Participant-level RRS values were calculated as the weighted sum of longitudinal log2 fold-changes using the locked beta coefficients. The same locked coefficient vector was applied to the training, holdout, and intermediate AURORA participants.
+```{r}
+
+stab_coeffs_all <- readRDS("RNA-based Recovery Score Final/stab_coeffs_all_20260507.rds")
+final_stable_genes <- read.csv("RNA-based Recovery Score Final/Selected_Stable_Genes_Final_Coefficients.csv")$Gene
+# aggregate stable elastic net coefficients across outer splits
+stable_coef_df <- bind_rows(stab_coeffs_all) %>%
+  filter(Gene %in% final_stable_genes) %>%
+  group_by(Gene) %>%
+  summarise(Avg_Beta = mean(Mean_Beta, na.rm = TRUE),
+            .groups = "drop") %>%
+  arrange(desc(abs(Avg_Beta)))
+
+#write.csv(stable_coef_df, "RNA-based Recovery Score Final/Selected_Stable_Genes_Final_Coefficients.csv")
+
+# locked final beta vector
+beta_vec_final <- stable_coef_df$Avg_Beta
+names(beta_vec_final) <- stable_coef_df$Gene
+
+# calculate participant-level RRS
+score_with_beta <- function(X, beta_vec) {
+  shared_genes <- intersect(colnames(X), names(beta_vec))
+  X_locked <- X[, shared_genes, drop = FALSE]
+  beta_locked <- beta_vec[shared_genes]
+  as.numeric(X_locked %*% beta_locked)
+}
+
+# apply locked RRS to each AURORA cohort
+RRS_train <- score_with_beta(X_train, beta_vec_final)
+RRS_holdout <- score_with_beta(X_holdout, beta_vec_final)
+RRS_intermediate <- score_with_beta(X_intermediate, beta_vec_final)
+
+train_eval_df <- tibble(PID = PID_train, RRS = RRS_train, Binary_Outcome = y_train,
+  Group = ifelse(y_train == 1L, "Recovered_extreme", "Chronic_extreme")) %>%
+  mutate(Group = factor(Group, levels = c("Recovered_extreme", "Chronic_extreme")))
+
+
+holdout_eval_df <- tibble(PID = PID_holdout, RRS = RRS_holdout, Binary_Outcome = y_holdout,
+  Group = ifelse(y_holdout == 1L, "Recovered_extreme", "Chronic_extreme")) %>%
+  mutate(Group = factor(Group, levels = c("Recovered_extreme", "Chronic_extreme")))
+
+
+intermediate_eval_df <- tibble(PID = PID_intermediate, RRS = RRS_intermediate, Group = "Intermediate")
+
+RRS_full_cohort <- bind_rows(
+  train_eval_df %>% dplyr::select(PID, RRS, Group),
+  holdout_eval_df %>% dplyr::select(PID, RRS, Group),
+  intermediate_eval_df) %>%
+  mutate(Group = factor(Group,levels = c("Chronic_extreme", "Intermediate", "Recovered_extreme")))
+
+#write.csv(RRS_full_cohort, "RNA-based Recovery Score Final/Final_RRS_Scores_Full_Cohort.csv")
+
+
+# attach metadata to full-cohort RRS
+meta_RRS_df <- RRS_full_cohort %>%
+  mutate(PID = as.character(PID)) %>%
+  left_join(metadata %>% mutate(PID = as.character(PID)), by = "PID")
+
+```
+
+
+## Evaluate the RRS
+RRS performance was evaluated by comparing recovered and chronic extreme phenotype groups in the training and holdout cohorts. Group differences were assessed using Welch’s t-tests, and classification performance was evaluated using ROC analyses and AUC estimates. The RRS significantly separated recovered and chronic participants in both the training cohort and heldout cohort, with stronger discrimination in the training cohort as expected. Intermediate participants were then projected onto the locked RRS, and score distributions were compared across chronic, intermediate, and recovered groups in the broader AURORA cohort.
+```{r}
+# TRAINING 
+t.test(RRS ~ Group, data = train_eval_df)
+# t = 9.6893, df = 138.77, p-value < 2.2e-16
+
+roc_train <- pROC::roc(response = train_eval_df$Binary_Outcome, predictor = train_eval_df$RRS,
+                       levels = c(0, 1), direction = "<", quiet = TRUE)
+
+auc_train <- as.numeric(pROC::auc(roc_train))
+auc_train # 0.8963608
+
+# HOLDOUT
+t.test(RRS ~ Group, data = holdout_eval_df)
+# t = 2.8203, df = 31.314, p-value = 0.008254
+
+roc_holdout <- pROC::roc(response = holdout_eval_df$Binary_Outcome, predictor = holdout_eval_df$RRS,
+                         levels = c(0, 1), direction = "<", quiet = TRUE)
+
+auc_holdout <- as.numeric(pROC::auc(roc_holdout))
+auc_holdout # 0.7222222
+
+# FULL AURORA COHORT WITH INTERMEDIATE PARTICIPANTS
+RRS_full_cohort <- RRS_full_cohort %>%
+  mutate(Group = factor(Group,levels = c("Chronic_extreme", "Intermediate", "Recovered_extreme")))
+
+anova(lm(RRS ~ Group, data = RRS_full_cohort))
+#            Df Sum Sq Mean Sq F value    Pr(>F)    
+# Group       2 18.448  9.2238  42.058 < 2.2e-16 ***
+
+pairwise.t.test(RRS_full_cohort$RRS, RRS_full_cohort$Group, p.adjust.method = "holm")
+
+
+# HELDOUT AURORA COHORT WITH INTERMEDIATE PARTICIPANTS
+
+all_heldout  <- c(PID_intermediate, PID_holdout)
+
+
+RRS_full_heldout_cohort <- RRS_full_cohort %>%
+  filter(PID %in% all_heldout) %>%
+  mutate(Group = factor(Group,levels = c("Chronic_extreme", "Intermediate", "Recovered_extreme")))
+
+  
+anova(lm(RRS ~ Group, data = RRS_full_heldout_cohort))
+#            Df Sum Sq Mean Sq F value    Pr(>F)    
+# Group       2  1.6825  0.84127 3.44      0.03585
+
+```
+
+### Plot RRS distributions 
+RRS distributions were visualized separately for the training cohort and heldout AURORA cohort. The training plot included only the recovered and chronic extreme phenotype groups used for model development, whereas the heldout plot included heldout recovered and chronic participants along with intermediate participants projected onto the locked score. Boxplots with overlaid individual participant values were used to show both group-level differences and within-group variability. Statistical annotations show recovered versus chronic group comparisons and, for the heldout cohort, the overall group association across chronic, intermediate, and recovered participants.
+```{r}
+# combine AURORA RRS groups for plotting
+rrs_plot_df <- bind_rows(
+  train_eval_df %>%
+    mutate(Set = "Training Cohort") %>%
+    dplyr::select(PID, RRS, Group, Set),
+  
+  holdout_eval_df %>%
+    mutate(Set = "Holdout Cohort") %>%
+    dplyr::select(PID, RRS, Group, Set),
+  
+  intermediate_eval_df %>%
+    mutate(Set = "Holdout Cohort") %>%
+    dplyr::select(PID, RRS, Group, Set))
+
+# holdout cohort includes heldout extremes plus intermediate participants
+holdout_three_df <- bind_rows(
+  holdout_eval_df %>% dplyr::select(PID, RRS, Group),
+  intermediate_eval_df) %>%
+  mutate(Group = factor(Group, levels = c("Chronic_extreme", "Intermediate", "Recovered_extreme")))
+
+# group labels for plotting
+rrs_plot_df <- rrs_plot_df %>%
+  mutate(
+    Plot_Group = case_when(
+      Set == "Training Cohort" & Group == "Recovered_extreme" ~ "Most\nRecovered\n(n = 79)",
+      Set == "Training Cohort" & Group == "Chronic_extreme" ~ "Most\nChronic\n(n = 64)",
+      Set == "Holdout Cohort" & Group == "Recovered_extreme" ~ "Most\nRecovered\n(n = 17)",
+      Set == "Holdout Cohort" & Group == "Intermediate" ~ "Intermediate\n(n = 67)",
+      Set == "Holdout Cohort" & Group == "Chronic_extreme" ~ "Most\nChronic\n(n = 18)"),
+    Plot_Group = factor(Plot_Group, levels = c("Most\nRecovered\n(n = 79)", "Most\nChronic\n(n = 64)",
+                                               "Most\nRecovered\n(n = 17)", "Intermediate\n(n = 67)",
+                                               "Most\nChronic\n(n = 18)")))
+
+group_colors <- c(
+  "Most\nRecovered\n(n = 79)" = "#2698B1",
+  "Most\nChronic\n(n = 64)" = "#8D1946",
+  "Most\nRecovered\n(n = 17)" = "#2698B1",
+  "Intermediate\n(n = 67)" = "#5B628E",
+  "Most\nChronic\n(n = 18)" = "#8D1946")
+
+train_p_label <- "p < 0.001"
+
+p_train <- rrs_plot_df %>%
+  filter(Set == "Training Cohort") %>%
+  ggplot(aes(x = Plot_Group, y = RRS, fill = Plot_Group)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, color = "black", linewidth = 0.5, alpha = 0.8) +
+  geom_jitter(aes(color = Plot_Group), width = 0.12, size = 2, alpha = 0.7, show.legend = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2, fill = "black", color = "black") +
+  scale_fill_manual(values = group_colors) +
+  scale_color_manual(values = group_colors) +
+  annotate("text", x = 1.5, y = 1.4, label = train_p_label, size = 5) +
+  labs(title = "Training Cohort\n(AURORA)", x = NULL, y = "RRS") +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y = element_text(color = "black"),
+    axis.title.y = element_text(size = 16, margin = margin(r = 0), vjust = -4),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "none")
+
+p_train
+
+#### Holdout cohort
+holdout_anova_p <- anova(lm(RRS ~ Group, data = holdout_three_df))$`Pr(>F)`[1]
+
+holdout_t <- t.test(RRS ~ Group, data = holdout_three_df %>%
+                      filter(Group %in% c("Recovered_extreme", "Chronic_extreme")))
+
+anova_label <- paste0("ANOVA p = ", signif(holdout_anova_p, 3))
+holdout_t_label <- paste0("p = ", signif(holdout_t$p.value, 2))
+
+p_holdout <- rrs_plot_df %>%
+  filter(Set == "Holdout Cohort") %>%
+  ggplot(aes(x = Plot_Group, y = RRS, fill = Plot_Group)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, color = "black", linewidth = 0.5, alpha = 0.8) +
+  geom_jitter(aes(color = Plot_Group), width = 0.12, size = 2, alpha = 0.7, show.legend = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2, fill = "black", color = "black") +
+  scale_y_continuous(limits = c(-1, 1.5)) +
+  scale_fill_manual(values = group_colors) +
+  scale_color_manual(values = group_colors) +
+  annotate("text", x = 1.25, y = -0.9, label = anova_label, size = 5) +
+  annotate("segment", x = 1, xend = 3, y = 1.25, yend = 1.25, linewidth = 0.5) +
+  annotate("segment", x = 1, xend = 1, y = 1.25, yend = 1.2, linewidth = 0.5) +
+  annotate("segment", x = 3, xend = 3, y = 1.25, yend = 1.2, linewidth = 0.5) +
+  annotate("text", x = 2, y = 1.4, label = holdout_t_label, size = 5) +
+  labs(title = "Heldout Test Cohort\n(AURORA)", x = NULL, y = "RRS") +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y = element_text(color = "black"),
+    axis.title.y = element_text(size = 16, margin = margin(r = 0), vjust = -0.25),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "none")
+
+p_holdout
+```
+
+### APNS AUC curves
+To evaluate whether the RRS generalized across individual APNS domains, RRS values were merged with APNS latent class metadata and tested separately for each of the ten outcome domains. For each APNS, participants in the chronic trajectory were compared against all non-chronic trajectory classes. ROC analyses were performed using the RRS to classify chronic versus non-chronic status, and AUC values with confidence intervals were calculated for each domain. ROC curves were then plotted together, with domain-specific AUC values included in the legend.
+```{r}
+# chronic vs all other classes
+get_chronic_vs_all <- function(APNS, data) {
+
+  chr_lvl <- chronic_groups[[APNS]]
+
+  data %>%
+    transmute(PID, RRS = as.numeric(RRS), class = as.character(.data[[APNS]])) %>%
+    filter(!is.na(class)) %>%
+    mutate(y = ifelse(class == chr_lvl, "Chronic", "Non-Chronic"),
+           y = factor(y, levels = c("Non-Chronic", "Chronic")),
+           y_bin = as.integer(y == "Chronic")) %>%
+    filter(complete.cases(RRS, y_bin))
+}
+
+run_domain_roc <- function(APNS, data) {
+
+  d <- get_chronic_vs_all(APNS, data)
+  roc_obj <- pROC::roc(response = d$y_bin, predictor = -d$RRS, quiet = TRUE)
+  auc_val <- as.numeric(pROC::auc(roc_obj))
+  ci_auc <- as.numeric(pROC::ci.auc(roc_obj))
+
+  roc_df <- tibble(APNS = APNS,
+                   fpr = 1 - roc_obj$specificities,
+                   tpr = roc_obj$sensitivities,
+                   AUC = auc_val)
+
+  summary_row <- tibble(APNS = APNS, N = nrow(d),
+                        AUC = auc_val, AUC_low = ci_auc[1],
+                        AUC_high = ci_auc[3], Prev_Chronic = mean(d$y_bin == 1),
+                        Prev_NonChronic = mean(d$y_bin == 0))
+
+  list(summary = summary_row, roc = roc_df)
+}
+
+res_list <- lapply(APNS_ordered, run_domain_roc, data = meta_RRS_df)
+
+auc_tbl <- bind_rows(lapply(res_list, `[[`, "summary")) %>%
+  mutate(APNS = factor(APNS, levels = APNS_ordered, labels = APNS_labels)) %>%
+  arrange(desc(AUC)) %>%
+  dplyr::select(-AUC_high, -AUC_low)
+
+#write.csv(auc_tbl, "RNA-based Recovery Score Final/AUC for chronic class prediction across APNS.csv")
+
+roc_df <- bind_rows(lapply(res_list, `[[`, "roc")) %>%
+  left_join(auc_tbl %>% dplyr::select(APNS, AUC), by = c("APNS", "AUC")) %>%
+  mutate(APNS = factor(APNS, levels = APNS_ordered))
+
+# legend labels with AUC
+auc_label_map <- auc_tbl %>%
+  mutate(lbl = paste0(as.character(APNS), " (AUC = ", sprintf("%.2f", AUC), ")")) %>%
+  { setNames(.$lbl, .$APNS) }
+
+RRS_ROC <- ggplot(roc_df, aes(x = fpr, y = tpr, color = APNS)) +
+  geom_line(linewidth = 1.1) +
+  geom_abline(linetype = "dashed", linewidth = 0.7) +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  scale_x_continuous(breaks = c(0, 0.5, 1)) +
+  scale_y_continuous(breaks = c(0, 0.5, 1)) +
+    scale_color_viridis_d(option = "F", labels = auc_label_map) +
+  labs(
+    x = "False Positive Rate",
+    y = "True Positive Rate",
+    color = NULL,
+    title = "ROC Curves for Chronic Class\nPrediction across APNS (n = 245) ") +
+  theme_minimal(base_size = 16) +
+  guides(color = guide_legend(override.aes = list(linewidth = 2.5))) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    axis.text = element_text(color = "black", size = 14),
+    axis.title = element_text(color = "black", size = 16),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.title.position = "plot", 
+    legend.text = element_text(size = 15, color = "black"),
+    legend.key.height = unit(1.2, "lines"),
+    legend.title =  element_text(size = 13, color = "black", face = "bold", hjust = 0.5),
+    legend.margin = margin(t = 0, r = 0, b = 0, l = -5))
+
+RRS_ROC
+
+```
+
+## AUC bar plots 
+```{r}
+RRS_AUC <- auc_tbl %>%
+  mutate(
+    APNS = forcats::fct_reorder(APNS, AUC, .desc = FALSE)
+  ) %>%
+  ggplot(aes(x = AUC, y = APNS, fill = "RRS")) +
+  geom_col(width = 0.75, fill = "grey60") +
+    scale_x_continuous(limits = c(0,1),
+    breaks = c(0, 0.2, 0.4, 0.6, 0.8, 1)
+  ) +
+  #coord_cartesian(
+  #  xlim = c(0.5, 0.85),
+  #  clip = "off"
+  #) +
+  labs(
+    x = "Area Under the Curve (AUC)",
+    y = NULL,
+    title = "RRS Discrimination of Chronic APNS\nAcross Symptom Domains (n = 245)"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    axis.text = element_text(color = "black", size = 14),
+    axis.title.x = element_text(color = "black", size = 16),
+    plot.title = element_text(face = "bold", hjust = 0.5, vjust = 1)#,
+   # plot.title.position = "plot"
+  )
+
+
+```
+
+
+
+
+### APNS ANOVAs
+To evaluate whether the RRS differentiated outcomes within individual APNS domains, separate association analyses were performed across the ten APNS latent class outcomes: Pain, Avoidance, Reexperience, Hyperarousal, Mental Fatigue, Anxious, Somatic, Loss, Nightmare, and Sleep. For binary APNS domains, Welch’s t-tests were used to compare RRS distributions across outcome groups. For APNS with more than two outcome levels, one-way ANOVAs were performed to test for overall differences in RRS across latent class trajectories. Raw p-values were adjusted across APNS domains using the Benjamini–Hochberg false discovery rate (FDR) method.
+```{r}
+
+APNS_level_map <- list(
+  Pain = c("Low", "Moderate Recovery", "Moderate", "High"),
+  Avoidance = c("Low", "Moderate Recovery", "Moderate", "High"),
+  Reexperience = c("Low", "Moderate Recovery", "Moderate", "High"),
+  Hyperarousal = c("Low", "Moderate", "High"),
+  Anxious = c("Low", "Moderate", "High"),
+  Somatic = c("Low", "Moderate", "High"),
+  MentalFatigue = c("Low", "Moderate", "High"),
+  Loss = c("Low", "Moderate", "High"),
+  Nightmare = c("Low", "High"),
+  Sleep = c("Low", "High"))
+
+
+APNS_RRS_test <- function(APNS) {
+  d <- meta_RRS_df %>%
+    dplyr::select(RRS, y = all_of(APNS)) %>%
+    filter(!is.na(y))
+
+  if (APNS %in% names(APNS_level_map)) {
+  d$y <- factor(d$y, levels = APNS_level_map[[APNS]])} 
+  else {d$y <- factor(d$y)} 
+  
+  L <- nlevels(d$y)
+  if (L < 2) return(NULL)
+
+  if (L == 2) {
+    tt <- t.test(RRS ~ y, data = d)  # Welch by default
+    tibble(
+      APNS = APNS, Levels = L, N = nrow(d),
+      Test = "Welch t",
+      Stat = unname(tt$statistic),
+      DF = as.character(unname(tt$parameter)),
+      P_value = tt$p.value
+    )
+  } else {
+    a  <- aov(RRS ~ y, data = d)
+    an <- anova(a)
+    tibble(
+      APNS = APNS, Levels = L, N = nrow(d),
+      Test = "ANOVA",
+      Stat = as.numeric(an["y","F value"]),
+      DF = paste0(as.integer(an["y","Df"]), ", ", as.integer(an["Residuals","Df"])),
+      P_value = as.numeric(an["y","Pr(>F)"])
+    )
+  }
+}
+
+APNS_anova_results <- lapply(APNS_ordered, APNS_RRS_test) %>% bind_rows()
+
+# FDR across the 10 domain-level tests
+APNS_anova_results <- APNS_anova_results %>%
+  mutate(FDR = p.adjust(P_value, method = "BH")) %>%
+  arrange(match(APNS, APNS_ordered))
+
+write.csv(APNS_anova_results, "RNA-based Recovery Score Final/RRS association with APNS latent classes.csv", row.names = FALSE)
+
+
+```
+
+### APNS Post-Hoc tests
+For APNS domains with more than two outcome levels, post-hoc pairwise comparisons were performed following significant omnibus ANOVA results. Estimated marginal means were derived from one-way ANOVA models using the emmeans package, and pairwise contrasts were evaluated with Benjamini–Hochberg correction. For each comparison, estimated group differences, standard errors, t-ratios, adjusted p-values, and 95% confidence intervals were reported.
+```{r}
+
+APNS_posthoc_results <- map(APNS_ordered, function(APNS) {
+  d <- meta_RRS_df %>% dplyr::select(RRS, y = all_of(APNS)) %>% filter(!is.na(y))
+  d$y <- as.factor(d$y)
+  if (nlevels(d$y) < 2) return(NULL)
+
+  fit <- aov(RRS ~ y, data = d)
+  pairs <- contrast(emmeans(fit, ~ y), method = "pairwise", adjust = "BH")
+  out <- summary(pairs, infer = c(TRUE, TRUE)) %>% as.data.frame()
+
+  out %>%
+    mutate(APNS = APNS) %>%
+    separate(contrast, into = c("Group1","Group2"), sep = " - ", remove = FALSE) %>%
+    dplyr::select(APNS, Group1, Group2, contrast,
+           estimate, SE, df, t.ratio, p.value, lower.CL, upper.CL)
+}) %>% list_rbind() %>%
+      mutate(across(where(is.numeric), format_num))
+
+
+
+# save
+write.csv(APNS_posthoc_results,"RNA-based Recovery Score Final/Post-hoc RRS association tests with APNS latent classes.csv",
+          row.names = FALSE)
+
+```
+
+

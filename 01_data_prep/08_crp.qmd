@@ -1,0 +1,177 @@
+---
+title: "CRP Data Preparation"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 1276-1427 ---- -->
+
+# CRP (ED, 2WK & M6)
+
+## Data prep 
+```{r}
+# load cytokine data
+CRP_data_full <- read.csv("Data/CRP Data/Data Files/AURORA_ALL_CRP_1471_raw.csv")
+
+# constants
+LLOQ <- 0.00164
+ULOQ <- 2.5
+
+CRP_data_analysis <- CRP_data_full %>%
+  dplyr::rename(
+    CRP_raw = CRP_MEAN.CONC..mg.dL..accounting.for.dilution) %>%
+  mutate(
+    PID = as.character(PID),
+    
+    # impute
+    CRP_imputed = case_when(
+      Range == "LLOQ" ~ LLOQ / sqrt(2),
+      Range == "ULOQ" ~ ULOQ,
+      TRUE ~ CRP_raw),
+    
+    # log transform
+    CRP_log = log2(CRP_imputed + 1),
+    
+    # harmonize time
+    Timepoint = recode(Timepoint,
+      "T0" = "ED",
+      "T1" = "WK2",
+      "T2" = "M6",
+      "T3" = "M6"),
+    
+    # unified technical variable
+    Plate = factor(Plate_new)) %>%
+  dplyr::select(PID, InventoryCode_New, Timepoint, Plate,
+                CRP_raw, CRP_log, Batch = batch)
+```
+
+## Batch effects 
+There were no batch effects observed according to the Executive Summary, while there were minor plate effects noted.  
+
+CRP values were log-transformed and adjusted for plate effects by fitting a linear model with plate as a predictor. Plate-adjusted CRP values were calculated as model residuals re-centered to the overall mean log-CRP value.
+```{r}
+# fit model
+fit_plate <- lm(CRP_log ~ Plate, data = CRP_data_analysis)
+
+# ANOVA + effect size
+crp_plate_summary <- anova(fit_plate) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("Term") %>%
+  mutate(
+    partial_R2 = `Sum Sq` / sum(`Sum Sq`),
+    Feature = "CRP",
+    n = nrow(CRP_data_analysis),
+    mean = mean(CRP_data_analysis$CRP_log, na.rm = TRUE),
+    sd = sd(CRP_data_analysis$CRP_log, na.rm = TRUE)) %>%
+  dplyr::select(Term, Df, `Sum Sq`, `Mean Sq`, `F value`, 
+                `Pr(>F)`, partial_R2, n, mean, sd)
+
+
+# export
+write.csv(crp_plate_summary, "Data/CRP Data/Analysis Data/CRP_Batch_Effect_Summary_3-23-2026.csv")
+
+crp_plate_df <- CRP_data_analysis %>%
+  dplyr::select(PID, InventoryCode_New, Plate, Timepoint, CRP_log) %>%
+  tidyr::drop_na()
+
+
+crp_plate_df <- crp_plate_df %>%
+  mutate(
+    CRP_log_adj = resid(fit_crp_plate) +
+      mean(CRP_log, na.rm = TRUE))
+
+# check removal of plate effect
+anova(lm(CRP_log_adj ~ Plate, data = crp_plate_df))
+
+# merge back
+CRP_data_analysis <- CRP_data_analysis %>%
+  left_join(
+    crp_plate_df %>% dplyr::select(PID, InventoryCode_New, CRP_log_adj),
+    by = c("PID", "InventoryCode_New"))
+
+
+```
+
+## Data for analysis 
+```{r}
+CRP_data_analysis_EDM6 <- CRP_data_analysis %>%
+  filter(
+    PID %in% PIDs_245_ED6M,
+    Timepoint %in% c("ED", "M6")) %>%
+  group_by(PID) %>%
+  filter(n_distinct(Timepoint) == 2) %>%
+  ungroup() %>%
+  arrange(PID, Timepoint)
+
+dim(CRP_data_analysis_EDM6) # 460 x 8 
+
+write.csv(CRP_data_analysis_EDM6, "Data/CRP Data/Analysis Data/CRP_Data_EDM6_460_3-23-2026.csv")
+
+CRP_data_analysis_ED2WKM6 <- CRP_data_analysis %>%
+  filter(
+    PID %in% PIDs_40_ED2WK6M,
+    Timepoint %in% c("ED","WK2", "M6")) %>%
+  group_by(PID) %>%
+  filter(n_distinct(Timepoint) == 3) %>%
+  ungroup() %>%
+  arrange(PID, Timepoint)
+
+dim(CRP_data_analysis_ED2WKM6) # 54 x 8 
+
+write.csv(CRP_data_analysis_ED2WKM6, "Data/CRP Data/Analysis Data/CRP_Data_ED2WKM6_54_3-23-2026.csv")
+
+
+```
+
+## Normality
+```{r}
+# function to summarize a single vector
+summarize_crp <- function(x) {
+  tibble(
+    N = sum(is.finite(x)),
+    Mean = mean(x, na.rm = TRUE),
+    Median = median(x, na.rm = TRUE),
+    SD = sd(x, na.rm = TRUE),
+    Skewness = e1071::skewness(x, na.rm = TRUE, type = 2),
+    Kurtosis = e1071::kurtosis(x, na.rm = TRUE, type = 2))
+}
+
+# build comparison table
+crp_normality_summary <- bind_rows(
+  
+  summarize_crp(CRP_data_analysis$CRP_raw) %>%
+    mutate(Scale = "Raw"),
+  
+  summarize_crp(CRP_data_analysis$CRP_log_adj) %>%
+    mutate(Scale = "Log2")) %>%
+  relocate(Scale)
+
+crp_normality_summary
+
+write.csv(crp_normality_summary, "Data/CRP Data/Analysis Data/CRP_Stat_Summary_3-23-2026.csv")
+
+```
+
+
+
+
+
+
+
+

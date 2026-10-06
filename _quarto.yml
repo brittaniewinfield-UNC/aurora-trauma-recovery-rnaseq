@@ -1,0 +1,10 @@
+project:
+  type: default
+  title: "AURORA Longitudinal RNA-seq: Trauma Recovery"
+  render:
+    - "01_data_prep/*.qmd"
+    - "02_primary_analyses/*.qmd"
+    - "03_two_week_subset_analyses/*.qmd"
+
+execute:
+  eval: false   # scripts are reference/reproduction code, not auto-run on every render (see README)

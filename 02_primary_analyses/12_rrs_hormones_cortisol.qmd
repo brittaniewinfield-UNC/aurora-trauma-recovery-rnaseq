@@ -1,0 +1,357 @@
+---
+title: "RRS Associations with Peritraumatic Hormones/Cortisol"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 6553-6884 ---- -->
+
+# RRS + HORMONES
+A helper function fits univariate linear models of RRS on each hormone (RRS ~ hormone_x), returning both raw and standardized effect estimates with confidence intervals and R². Hormone measures are merged onto the RRS metadata by PID, and each hormone variable is run through this function in turn. The resulting association table is then FDR-corrected (BH) and sorted by adjusted p-value to highlight hormones most strongly related to the RRS.
+
+```{r}
+# univariate regression helper for hormones: RRS ~ hormone_x
+run_regression_hormone <- function(var, data) {
+  df <- data %>%
+    dplyr::select(RRS, !!sym(var)) %>%
+    dplyr::rename(x = !!sym(var)) %>%
+    mutate(RRS = as.numeric(RRS),
+           x  = as.numeric(x)) %>%
+    filter(complete.cases(.))
+
+  # raw model
+  m_raw <- lm(RRS ~ x, data = df)
+  sm_raw <- summary(m_raw)
+  coefs_raw <- as.data.frame(sm_raw$coefficients)
+
+  # standardized model
+  df$y_std <- as.numeric(scale(df$RRS))
+  df$x_std <- as.numeric(scale(df$x))
+  m_std <- lm(y_std ~ x_std, data = df)
+  sm_std <- summary(m_std)
+  coefs_std <- as.data.frame(sm_std$coefficients)
+
+  out <- data.frame(
+    Variable = var,
+    Term = var,
+    Sample_Size = nrow(df),
+    Coefficient = unname(coefs_raw["x", "Estimate"]),
+    Std_Error = unname(coefs_raw["x", "Std. Error"]),
+    T_value = unname(coefs_raw["x", "t value"]),
+    P_value = unname(coefs_raw["x", "Pr(>|t|)"]),
+    R_squared = sm_raw$r.squared,
+    Std_Coefficient = unname(coefs_std["x_std", "Estimate"]),
+    Std_SE = unname(coefs_std["x_std", "Std. Error"]),
+    stringsAsFactors = FALSE)
+
+  out$CI_lower <- out$Coefficient - 1.96 * out$Std_Error
+  out$CI_upper <- out$Coefficient  + 1.96 * out$Std_Error
+  out$Std_CI_lower <- out$Std_Coefficient - 1.96 * out$Std_SE
+  out$Std_CI_upper <- out$Std_Coefficient + 1.96 * out$Std_SE
+  out$Type <- "Continuous"
+
+  out
+}
+
+hormone_vars <- c(setdiff(names(hormone_data),
+          c("PID", "SAMPLE.ID", "Sample.bar.code", "Tube.label", "Sample.volume..µL.")), "E2_sqrt")
+
+E2_data <- read.csv("Data/E2 Data/Analysis Data/E2_Data_ED26M_150_4-16-2026.csv") %>%
+  dplyr::select(PID, E2_sqrt)
+
+metadata_hormones <- meta_RRS_df %>%
+  mutate(PID = as.character(PID)) %>%
+  left_join(
+    hormone_data %>% mutate(PID = as.character(PID)),
+    by = "PID") %>%
+  left_join(
+    E2_data %>% mutate(PID = as.character(PID)),
+    by = "PID") 
+
+
+
+hormone_results_df <- purrr::map_dfr(hormone_vars, run_regression_hormone,data = metadata_hormones) %>%
+  mutate(FDR = p.adjust(P_value, method = "BH")) %>%
+  arrange(FDR)
+
+
+
+
+hormone_results_export <- hormone_results_df %>%
+  dplyr::select(Variable, P_value, FDR, Coefficient, T_value, Std_Error, 
+                R_squared, Std_Coefficient, Std_SE, CI_lower, CI_upper, 
+                Std_CI_lower, Std_CI_upper, Type, Sample_Size) %>%
+  dplyr::rename(
+    `Hormone` = Variable,
+    `P value` = P_value,
+    `FDR` = FDR,
+    `Coefficient` = Coefficient,
+    `t value` = T_value,
+    `Standard error` = Std_Error,
+    `R squared` = R_squared,
+    `Standardized coefficient` = Std_Coefficient,
+    `Standardized SE` = Std_SE,
+    `CI lower` = CI_lower,
+    `CI upper` = CI_upper,
+    `Std CI lower` = Std_CI_lower,
+    `Std CI upper` = Std_CI_upper, 
+    `Sample Size` = Sample_Size) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+write.csv(hormone_results_export, "RRS Correlates/ED Hormones RRS Linear Regression Results Unadjusted.csv")
+
+
+results_by_gender <- metadata_hormones %>%
+  left_join(metadata %>% mutate(PID = as.character(PID)), by = "PID") %>%
+  split(.$Gender) %>%
+  purrr::imap_dfr(~{
+    
+    res <- purrr::map_dfr(
+      hormone_vars,
+      run_regression_hormone,
+      data = .x
+    ) %>%
+      mutate(
+        FDR = p.adjust(P_value, method = "BH"),
+        Gender = .y
+      )
+    
+    res
+  })
+
+
+
+```
+
+## Adjusted model 
+```{r}
+run_regression_hormone_adj <- function(var, data) {
+  
+  df <- data %>%
+    dplyr::select(RRS, !!sym(var), Age, BMI, Gender) %>%
+    dplyr::rename(x = !!sym(var)) %>%
+    mutate(
+      RRS = as.numeric(RRS),
+      x = as.numeric(x)
+    ) %>%
+    filter(complete.cases(.))
+
+  # adjusted model
+  m_raw <- lm(RRS ~ x + Age + BMI + Gender, data = df)
+  sm_raw <- summary(m_raw)
+  coefs_raw <- as.data.frame(sm_raw$coefficients)
+
+  # standardized model
+  df$y_std <- as.numeric(scale(df$RRS))
+  df$x_std <- as.numeric(scale(df$x))
+  m_std <- lm(y_std ~ x_std, data = df)
+  sm_std <- summary(m_std)
+  coefs_std <- as.data.frame(sm_std$coefficients)
+
+  out <- data.frame(
+    Variable = var,
+    Term = var,
+    Sample_Size = nrow(df),
+    Coefficient = unname(coefs_raw["x", "Estimate"]),
+    Std_Error = unname(coefs_raw["x", "Std. Error"]),
+    T_value = unname(coefs_raw["x", "t value"]),
+    P_value = unname(coefs_raw["x", "Pr(>|t|)"]),
+    R_squared = sm_raw$r.squared,
+    Std_Coefficient = unname(coefs_std["x_std", "Estimate"]),
+    Std_SE = unname(coefs_std["x_std", "Std. Error"]),
+    stringsAsFactors = FALSE)
+
+  out$CI_lower <- out$Coefficient - 1.96 * out$Std_Error
+  out$CI_upper <- out$Coefficient  + 1.96 * out$Std_Error
+  out$Std_CI_lower <- out$Std_Coefficient - 1.96 * out$Std_SE
+  out$Std_CI_upper <- out$Std_Coefficient + 1.96 * out$Std_SE
+  out$Type <- "Continuous"
+
+  out
+}
+hormone_vars <- c(
+  setdiff(names(hormone_data),
+          c("PID", "SAMPLE.ID", "Sample.bar.code", "Tube.label", "Sample.volume..µL.")),
+  "E2_sqrt"
+)
+
+
+metadata_hormones <- metadata_hormones %>%
+  left_join(metadata %>% mutate(PID = as.character(PID)), by = "PID")
+
+hormone_results_df <- purrr::map_dfr(
+  hormone_vars,
+  run_regression_hormone_adj,
+  data = metadata_hormones
+) %>%
+    dplyr::filter(Variable != "E2") %>%
+  mutate(
+    FDR = p.adjust(P_value, method = "BH")) %>%
+  arrange(FDR) 
+
+hormone_results_export_adj <- hormone_results_df %>%
+  dplyr::select(Variable, P_value, FDR, Coefficient, T_value, Std_Error, 
+                R_squared, Std_Coefficient, Std_SE, CI_lower, CI_upper, 
+                Std_CI_lower, Std_CI_upper, Type, Sample_Size) %>%
+  dplyr::rename(
+    `Hormone` = Variable,
+    `P value` = P_value,
+    `FDR` = FDR,
+    `Coefficient` = Coefficient,
+    `t value` = T_value,
+    `Standard error` = Std_Error,
+    `R squared` = R_squared,
+    `Standardized coefficient` = Std_Coefficient,
+    `Standardized SE` = Std_SE,
+    `CI lower` = CI_lower,
+    `CI upper` = CI_upper,
+    `Std CI lower` = Std_CI_lower,
+    `Std CI upper` = Std_CI_upper, 
+    `Sample Size` = Sample_Size) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+
+write.csv(hormone_results_export, "RRS Correlates/ED Hormones RRS Linear Regression Results Adjusted (age, BMI, sex).csv")
+
+
+```
+
+### Forest Plot
+```{r}
+
+hormone_labels <- c("Cortisol" = "Cortisol", "Corticosterone" = "Corticosterone", "Cortisone" = "Cortisone", "X11.Deoxycorticosterone" = "11-Deoxycorticosterone", "X11.Deoxycortisol" = "11-Deoxycortisol", "Etiocholanolone" = "Etiocholanolone", "Androsterone" = "Androsterone", "DHEAS" = "DHEAS", "DHT" = "DHT", "Testosterone" = "Testosterone", "X17.OHP" = "17-OHP", "DHEA" = "DHEA", "E1" = "E1", "Aldosterone" = "Aldosterone", "Androstenedione" = "Androstenedione", "Progesterone" = "Progesterone", "E2_sqrt" = "E2")
+
+
+# start from the object you actually created
+hormones_forest_data <- hormone_results_df %>%
+    filter(Variable != "E2") %>%
+  mutate(
+    Variable = recode(Variable, !!!hormone_labels),
+    Sig = if_else(!is.na(FDR) & FDR < 0.05, "sig", "nonsig"),
+    Sig = factor(Sig, levels = c("nonsig", "sig")),
+    Color = if_else(Sig == "sig", "#2698B1", "grey30")
+  ) %>%
+  arrange(Std_Coefficient) %>%
+  mutate(Variable = factor(Variable, levels = unique(Variable))) 
+hormone_forest_plot <- ggplot(hormones_forest_data, aes(x = Std_Coefficient, y = Variable)) +
+  geom_errorbarh(aes(xmin = Std_CI_lower, xmax = Std_CI_upper, color = Color),
+                 height = 0.45, linewidth = 1.2) +
+  geom_point(aes(color = Color), size = 5) +
+  scale_color_identity() +
+  scale_x_continuous(limits = c(-0.6, 0.6), breaks = c(-0.5, 0, 0.5)) +
+  geom_vline(xintercept = 0,
+             linetype = "dashed",
+             color = "black",
+             linewidth = 0.4) +
+  theme_minimal() +
+  labs(x = "Effect size (β)",
+       y = "Hormone Levels at the ED") +
+  theme(
+    axis.text = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+        axis.text.y = element_text(size = 12, color = "black"),
+
+    axis.title.x = element_text(size = 12, color = "black"),
+    axis.title.y = element_text(size = 12.5, color = "black", face = "bold"),
+    legend.position = "none",
+    panel.border = element_rect(color = "black", fill = NA, size = 1))
+
+ggsave(hormone_forest_plot, filename = "Figures/ED Hormones RRS Regression Forest Plot v2.jpg", width = 4.5, height = 6, dpi = 500)
+
+
+```
+
+```{r}
+
+
+regression_results_combined <- bind_rows(
+  
+  regression_results_df_plot %>%
+    transmute(
+      Variable = Display,
+      Analysis = Category,
+      Model = "Unadjusted",
+      Coefficient = Coefficient,
+      Standard_Error = Std_Error,
+      T_value = T_value,
+      P_value = P_value,
+      FDR = FDR,
+      R_squared = R_squared,
+      Standardized_Coefficient = Std_Coefficient,
+      Standardized_SE = Std_SE,
+      CI_lower = CI_lower,
+      CI_upper = CI_upper,
+      Standardized_CI_lower = Std_CI_lower,
+      Standardized_CI_upper = Std_CI_upper,
+      Type = Type,
+      Sample_Size = Sample_Size
+    ),
+  
+  hormone_results_export %>%
+    transmute(
+      Variable = Hormone,
+      Analysis = "Hormones",
+      Model = "Unadjusted",
+      Coefficient = as.numeric(Coefficient),
+      Standard_Error = as.numeric(`Standard error`),
+      T_value = as.numeric(`t value`),
+      P_value = as.numeric(`P value`),
+      FDR = as.numeric(FDR),
+      R_squared = as.numeric(`R squared`),
+      Standardized_Coefficient = as.numeric(`Standardized coefficient`),
+      Standardized_SE = as.numeric(`Standardized SE`),
+      CI_lower = as.numeric(`CI lower`),
+      CI_upper = as.numeric(`CI upper`),
+      Standardized_CI_lower = as.numeric(`Std CI lower`),
+      Standardized_CI_upper = as.numeric(`Std CI upper`),
+      Type = Type,
+      Sample_Size = as.integer(as.numeric(`Sample Size`))
+    ),
+  
+  hormone_results_export_adj %>%
+    transmute(
+      Variable = Hormone,
+      Analysis = "Hormones",
+      Model = "Adjusted",
+      Coefficient = as.numeric(Coefficient),
+      Standard_Error = as.numeric(`Standard error`),
+      T_value = as.numeric(`t value`),
+      P_value = as.numeric(`P value`),
+      FDR = as.numeric(FDR),
+      R_squared = as.numeric(`R squared`),
+      Standardized_Coefficient = as.numeric(`Standardized coefficient`),
+      Standardized_SE = as.numeric(`Standardized SE`),
+      CI_lower = as.numeric(`CI lower`),
+      CI_upper = as.numeric(`CI upper`),
+      Standardized_CI_lower = as.numeric(`Std CI lower`),
+      Standardized_CI_upper = as.numeric(`Std CI upper`),
+      Type = Type,
+      Sample_Size = as.integer(as.numeric(`Sample Size`))
+    )
+) %>%
+  arrange(Analysis, Variable, Model) %>%
+  dplyr::select(Analysis, Variable, Model, everything()) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+write.csv(regression_results_combined, "RRS Correlates/Combined RRS Associations.csv")
+
+```
+
+
+

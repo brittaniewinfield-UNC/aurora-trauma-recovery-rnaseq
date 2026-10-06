@@ -1,0 +1,407 @@
+---
+title: "Two-Week Subset: Cytokines"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
+
+<!-- ---- original lines 1732-2113 ---- -->
+
+# CYTOKINES 
+
+## Within class
+```{r}
+cytokine_data <- read.csv("Data/Cytokine Data/Analysis Data/Cytokine_Data_ED2WK6M_51_3-23-2026.csv")
+
+cyto_df <- cytokine_data %>%
+  mutate(PID = as.character(PID)) %>%
+  left_join(
+    RRS_df_median_2wk %>%
+      mutate(PID = as.character(PID)) %>%
+      dplyr::select(PID, RRS_median_group),
+    by = "PID") %>%
+  filter(
+    RRS_median_group %in% c("High_RRS", "Low_RRS"),
+    Timepoint %in% c("ED", "WK2", "M6"))
+
+cyto_cols <- cyto_df %>%
+  dplyr::select(-X, -PID, -Timepoint, -RRS_median_group) %>%
+  names()
+
+cyto_long <- cyto_df %>%
+  dplyr::select(PID, RRS_median_group, Timepoint, all_of(cyto_cols)) %>%
+  pivot_longer(
+    cols = all_of(cyto_cols),
+    names_to = "Cytokine",
+    values_to = "Value")
+
+cyto_wide <- cyto_long %>%
+  pivot_wider(
+    names_from = Timepoint,
+    values_from = Value)
+
+cyto_interval_results <- purrr::map_dfr(
+  seq_len(nrow(intervals)),
+  function(i) {
+    comp  <- intervals$Comparison[i]
+    time1 <- intervals$time1[i]
+    time2 <- intervals$time2[i]
+
+    cyto_wide %>%
+      dplyr::group_by(RRS_median_group, Cytokine) %>%
+      group_modify(~ run_paired_interval_test(.x, time1, time2)) %>%
+      ungroup() %>%
+      mutate(
+        Comparison = comp,
+        .before = 1
+      )
+  }) %>%
+  dplyr::group_by(RRS_median_group, Comparison) %>%
+  mutate(FDR = p.adjust(`P Value`, method = "BH")) %>%
+  ungroup() %>%
+  mutate(RRS_median_group = factor(RRS_median_group, levels = c("High_RRS", "Low_RRS")))
+
+cyto_interval_results <- cyto_interval_results %>%
+  dplyr::select(Comparison, RRS_median_group, Cytokine, FDR, `P Value`, `Avg Δ (WK2 − ED)`, `Avg Δ (M6 − WK2)`,`Avg Δ (M6 − ED)`, `T Stat`, `SE`, `95% CI`, `Avg ED`, `Avg WK2`, `Avg M6` ) 
+
+
+# EXPORT ------------------------------------------------------------
+wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center")
+body_style   <- createStyle(halign = "center")
+
+add_sheet_with_data <- function(wb, sheet_name, data) {
+  addWorksheet(wb, sheet_name)
+  writeData(wb, sheet = sheet_name, data)
+
+  addStyle(wb, sheet = sheet_name, header_style,
+           rows = 1, cols = seq_len(ncol(data)), gridExpand = TRUE)
+
+  if(nrow(data) > 0) {
+    addStyle(wb, sheet = sheet_name, body_style,
+             rows = 2:(nrow(data) + 1), cols = seq_len(ncol(data)), gridExpand = TRUE)
+  }
+
+  setColWidths(wb, sheet = sheet_name, cols = seq_len(ncol(data)), widths = "auto")
+}
+
+sheet_order <- expand_grid(
+  RRS_median_group = c("High_RRS", "Low_RRS"),
+  Comparison = c("ED_vs_WK2", "WK2_vs_M6", "ED_vs_M6"))
+
+
+for(i in seq_len(nrow(sheet_order))) {
+
+  group_i <- sheet_order$RRS_median_group[i]
+  comp_i  <- sheet_order$Comparison[i]
+
+  sheet_data <- cyto_interval_results %>%
+    filter(as.character(RRS_median_group) == group_i, Comparison == comp_i) %>%
+    arrange(`P Value`)
+  
+  sheet_name <- paste(group_i, comp_i, sep = "_")
+  add_sheet_with_data(wb, sheet_name, sheet_data)
+}
+
+saveWorkbook(wb, "2WK Analyses/Cytokines/Within Group Longitudinal Tests/EDWK2M6_cytokines_within_class_results.xlsx", overwrite = TRUE)
+
+cyto_interval_results_export <- cyto_interval_results %>%
+  dplyr::rename(Interval = Comparison ,
+                `RRS Group` = RRS_median_group) %>%
+    mutate(
+  Interval = case_when(
+    Interval == "ED_vs_WK2" ~ "ED vs WK2",
+    Interval == "WK2_vs_M6" ~ "WK2 vs 6M",
+    Interval == "ED_vs_M6" ~ "ED vs 6M",
+    TRUE ~ as.character(Interval)
+  ), 
+    `RRS Group` = case_when(
+    `RRS Group` == "High_RRS" ~ "High RRS",
+    `RRS Group` == "Low_RRS" ~ "Low RRS",
+    TRUE ~ as.character(`RRS Group`)
+  ),
+   Direction = case_when(
+      Interval == "ED vs WK2" & `Avg Δ (WK2 − ED)` > 0 ~ "Higher at WK2",
+      Interval == "ED vs WK2" & `Avg Δ (WK2 − ED)` < 0 ~ "Higher at ED",
+      Interval == "WK2 vs 6M" & `Avg Δ (M6 − WK2)` > 0 ~ "Higher at 6M",
+      Interval == "WK2 vs 6M" & `Avg Δ (M6 − WK2)` < 0 ~ "Higher at WK2",
+      Interval == "ED vs 6M" & `Avg Δ (M6 − ED)` > 0 ~ "Higher at 6M",
+      Interval == "ED vs 6M" & `Avg Δ (M6 − ED)` < 0 ~ "Higher at ED",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+    mutate(Interval = factor(Interval, levels = c("ED vs WK2", "WK2 vs 6M", "ED vs 6M"))) %>%
+
+  arrange(Interval, `RRS Group`, `P Value`)  %>%
+    mutate(across(where(is.numeric), format_num))
+
+write.csv(cyto_interval_results_export, "2WK Analyses/Cytokines/Within Group Longitudinal Tests/EDWK2M6_cytokines_within_class_results.csv")
+```
+
+## Between class
+```{r}
+
+cyto_delta <- cyto_wide %>%
+  mutate(
+    delta_ED_WK2 = WK2 - ED,
+    delta_WK2_M6 = M6 - WK2, 
+    delta_ED_M6 = M6 - ED )
+
+cyto_delta_results <- purrr::map_dfr(
+  unique(cyto_delta$Cytokine),
+  function(cyto) {
+    df_cyto <- cyto_delta %>% filter(Cytokine == cyto)
+
+    bind_rows(
+      run_delta_test(df_cyto, "delta_ED_WK2") %>%
+        mutate(Comparison = "ED_vs_WK2"),
+      run_delta_test(df_cyto, "delta_WK2_M6") %>%
+        mutate(Comparison = "WK2_vs_M6"),
+      run_delta_test(df_cyto, "delta_ED_M6") %>%
+        mutate(Comparison = "ED_vs_M6")) %>%
+      mutate(Cytokine = cyto, .before = 1)
+  }
+) %>%
+  group_by(Comparison) %>%
+  mutate(FDR = p.adjust(`P Value`, method = "BH")) %>%
+  ungroup() %>%
+  arrange(`P Value`)
+
+cytokines_between_sheets <- list(
+  ED_vs_WK2 = cyto_delta_results %>%
+    filter(Comparison == "ED_vs_WK2") %>%
+    arrange(`P Value`),
+  WK2_vs_M6 = cyto_delta_results %>%
+    filter(Comparison == "WK2_vs_M6") %>%
+    arrange(`P Value`),
+  ED_vs_M6 = cyto_delta_results %>%
+    filter(Comparison == "ED_vs_M6") %>%
+    arrange(`P Value`))
+
+
+wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center")
+body_style   <- createStyle(halign = "center")
+
+add_sheet_with_data <- function(wb, sheet_name, data) {
+  addWorksheet(wb, sheet_name)
+  writeData(wb, sheet = sheet_name, data)
+
+  addStyle(wb, sheet = sheet_name, header_style,
+           rows = 1, cols = seq_len(ncol(data)), gridExpand = TRUE)
+
+  if(nrow(data) > 0) {
+    addStyle(wb, sheet = sheet_name, body_style,
+             rows = 2:(nrow(data) + 1), cols = seq_len(ncol(data)), gridExpand = TRUE)
+  }
+
+  setColWidths(wb, sheet = sheet_name, cols = seq_len(ncol(data)), widths = "auto")
+}
+
+purrr::iwalk(
+  cytokines_between_sheets,
+  ~ add_sheet_with_data(wb, sheet_name = .y, data = .x))
+
+saveWorkbook(wb, "2WK Analyses/Cytokines/Between Group Change Score Tests/EDWK2M6_cytokines_between_class_results.xlsx", overwrite = TRUE)
+
+
+```
+
+## Figure 6f
+```{r}
+selected_cytokines <- cyto_cols
+
+selected_cytokines <- c("IL_6", "TNF_alpha", "IFN_gama","IL_8", "IL_10")
+
+plot_df_cyto <- cyto_long %>%
+  filter(RRS_median_group %in% c("High_RRS", "Low_RRS"),
+         Timepoint %in% c("ED", "WK2", "M6"),
+         Cytokine %in% selected_cytokines) %>%
+  mutate(Timepoint = factor(Timepoint, levels = c("ED", "WK2", "M6")),
+         Cytokine = factor(Cytokine, levels = selected_cytokines),
+         RRS_median_group = factor(RRS_median_group,
+                                   levels = c("Low_RRS", "High_RRS"),
+                                   labels = c("Low RRS", "High RRS")), 
+         Cytokine = recode(Cytokine, "IFN_gama" = "IFN-γ",
+                           "IL_10" = "IL-10",
+                           "IL_6"  = "IL-6",
+                           "IL_8"  = "IL-8",
+                           "TNF_alpha" = "TNF-α")) %>%
+  group_by(RRS_median_group, Timepoint, Cytokine) %>%
+  summarise(
+    mean_value = mean(Value, na.rm = TRUE),
+    se = sd(Value, na.rm = TRUE) / sqrt(sum(!is.na(Value))),
+    .groups = "drop")
+
+cytokine_plot <- ggplot(
+  plot_df_cyto,
+  aes(
+    x = Timepoint,
+    y = mean_value,
+    group = RRS_median_group,
+    color = RRS_median_group
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3.2) +
+  geom_errorbar(
+    aes(ymin = mean_value - se, ymax = mean_value + se),
+    width = 0.08,
+    linewidth = 0.7
+  ) +
+  facet_wrap(~ Cytokine, scales = "free_y", ncol = 5) +
+  labs(
+    x = NULL,
+    y = "Cytokine Level",
+    color = NULL
+  ) +
+  scale_y_continuous(
+    breaks = function(x) {
+      r <- range(x, na.rm = TRUE)
+      seq(r[1] + 0.06 * diff(r), r[2] - 0.06 * diff(r), length.out = 3)
+    },
+    labels = function(x) sprintf("%.2f", x)
+  ) +
+  scale_color_manual(values = c("Low RRS" = "firebrick4", "High RRS" = "cyan3")) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    strip.background = element_blank(),
+    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
+    axis.text.x = element_text(color = "black", size = 14),
+    axis.title = element_text(color = "black", size = 16),
+    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
+    legend.position = "bottom",
+    legend.text = element_text(size = 15),
+    legend.key.width = unit(1.5, "lines"),
+    panel.spacing.y = unit(0.3, "lines"),
+    axis.ticks.length = unit(0, "pt"), 
+    legend.margin = margin(t = -5),
+    legend.box.margin = margin(t = -5), 
+    plot.margin = margin(t = 20))+
+  guides(
+    color = guide_legend(
+      override.aes = list(linewidth = 1.8, size = 5)
+    )
+  )
+
+cytokine_plot
+
+```
+
+## Figure 6f v2 
+```{r}
+selected_cytokines <- cyto_cols
+
+selected_cytokines <- c("IL_6", "TNF_alpha", "IFN_gama","IL_8", "IL_10")
+
+
+plot_df_cyto <- cyto_long %>%
+  filter(RRS_median_group %in% c("High_RRS", "Low_RRS"),
+         Timepoint %in% c("ED", "WK2", "M6"),
+         Cytokine %in% selected_cytokines) %>%
+  mutate(
+    Timepoint = factor(Timepoint, levels = c("ED", "WK2", "M6")),
+    time_days = case_when(
+      Timepoint == "ED" ~ 25,
+      Timepoint == "WK2" ~ 50,
+      Timepoint == "M6" ~ 160
+    ),
+    Cytokine = factor(Cytokine, levels = selected_cytokines),
+    RRS_median_group = factor(
+      RRS_median_group,
+      levels = c("Low_RRS", "High_RRS"),
+      labels = c("Low RRS", "High RRS")),
+    Cytokine = recode(
+      Cytokine, 
+      "IFN_gama" = "IFN-γ",
+      "IL_10" = "IL-10",
+      "IL_6"  = "IL-6",
+      "IL_8"  = "IL-8",
+      "TNF_alpha" = "TNF-α")) %>%
+  group_by(RRS_median_group, Timepoint, time_days, Cytokine) %>%
+  summarise(
+    mean_value = mean(Value, na.rm = TRUE),
+    se = sd(Value, na.rm = TRUE) / sqrt(sum(!is.na(Value))),
+    .groups = "drop")
+
+cytokine_plot <- ggplot(
+  plot_df_cyto,
+  aes(
+    x = time_days,
+    y = mean_value,
+    group = RRS_median_group,
+    color = RRS_median_group
+  )
+) +
+  geom_line(linewidth = 2) +
+  geom_point(size = 3.2) +
+  geom_errorbar(
+    aes(ymin = mean_value - se, ymax = mean_value + se),
+    width = 4,
+    linewidth = 0.7
+  ) +
+  facet_wrap(~ Cytokine, scales = "free_y", ncol = 5) +
+  scale_x_continuous(
+    limits = c(0,180),
+    breaks = c(25, 50, 160),
+    labels = c("", "", ""),
+    expand = expansion(mult = c(0.04, 0.04))
+  ) +
+  labs(
+    x = NULL,
+    y = "Cytokine Level",
+    color = NULL
+  ) +
+  scale_y_continuous(
+    breaks = function(x) {
+      r <- range(x, na.rm = TRUE)
+      seq(r[1] + 0.06 * diff(r), r[2] - 0.06 * diff(r), length.out = 3)
+    },
+    labels = function(x) sprintf("%.2f", x)
+  ) +
+  scale_color_manual(values = c("Low RRS" = "#8D1946", "High RRS" = "#2A93B5")) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    strip.background = element_blank(),
+    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
+    axis.text.x = element_text(color = "black", size = 14),
+    axis.title = element_text(color = "black", size = 16),
+    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
+    legend.position = "none",
+    legend.text = element_text(size = 15),
+    legend.key.width = unit(1.5, "lines"),
+    panel.spacing.x = unit(1, "lines"),
+    axis.ticks.length = unit(0, "pt"), 
+    legend.margin = margin(t = -5),
+    legend.box.margin = margin(t = -5), 
+    plot.margin = margin(t = 20)
+  ) 
+cytokine_plot
+
+```
+
+
+

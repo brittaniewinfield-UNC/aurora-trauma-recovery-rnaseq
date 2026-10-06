@@ -1,0 +1,180 @@
+---
+title: "Two-Week Subset: Setup, Data Loading, Helper Functions"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
+
+<!-- ---- original lines 1-155 ---- -->
+
+
+```{r}
+library(edgeR)
+library(variancePartition)
+library(limma)
+library(BiocParallel)
+library(dplyr)
+
+```
+
+# Load data
+
+## PIDs and ICs 
+```{r}
+PIDs_2WK <- read.csv("Data/Metadata/Analysis Data/PIDs_40_ED2WK6M.csv")
+PIDs_2wk <- PIDs_2WK$x
+
+ICs_2WK <- read.csv("Data/Metadata/Analysis Data/ICs_120_ED2WK6M.csv")
+ICs_2wk <- ICs_2WK$x
+```
+
+## Metadata 
+```{r}
+metadata <- read.csv("Data/Metadata/Analysis Data/Metadata_Analysis_3-23-2026.csv")
+metadata_2wk <- metadata %>% filter(PID %in% PIDs_2wk)
+
+dim(metadata_2wk)
+
+metadata_ICs <- read.csv("Data/Metadata/Analysis Data/Metadata_Analysis_ICs_3-23-2026.csv")
+metadata_ICs_2wk <- metadata_ICs %>% filter(INVENTORY.CODE %in% ICs_2wk) %>%
+  mutate(PID = as.character(PID)) %>%
+  dplyr::select(-X)
+
+dim(metadata_ICs_2wk)
+```
+
+## RRS data 
+```{r}
+RRS_df <- read.csv("RNA-based Recovery Score Final/Final_RRS_Scores_Full_Cohort.csv")
+
+#RRS_df_2wk <- RRS_df %>% filter(PID %in% PIDs_2wk)
+
+# median split of full cohort based on RRS
+rrs_median <- median(RRS_df$RRS, na.rm = TRUE)
+
+RRS_df_median <- RRS_df %>%
+  mutate(
+    PID = as.character(PID),
+    RRS_median_group = case_when(
+      RRS > rrs_median ~ "High_RRS",
+      RRS < rrs_median ~ "Low_RRS",
+      TRUE ~ "Median"))
+
+RRS_df_median_2wk <- RRS_df_median %>%
+  filter(PID %in% PIDs_2wk)
+
+table(RRS_df_median_2wk$RRS_median_group) 
+# High RRS = 21 
+# Low RRS = 19 
+```
+
+## RNA data 
+```{r}
+RNA_counts_2wk <- read.csv("Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_counts_ED2WK6M_120_3-23-2026.csv")
+
+RNA_log2_2wk <- read.csv("Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_log2_ED2WK6M_120_3-23-2026.csv")
+
+```
+
+## Transcription Factor Activity 
+```{r}
+TF_data_EDWK2M6 <- read.csv("Data/Transcription Factor Data/Analysis Data/TF_Activity_ED2WK6M_120_3-31-2026.csv") %>%
+  dplyr::select(-X) %>%
+  dplyr::select(PID, Timepoint, INVENTORY.CODE, everything()) %>%
+  mutate(PID = as.character(PID))
+```
+
+# Functions 
+
+## Within class 
+```{r}
+
+intervals <- tribble(
+  ~Comparison,   ~time1, ~time2,
+  "ED_vs_WK2",   "ED",   "WK2",
+  "WK2_vs_M6",   "WK2",  "M6",
+  "ED_vs_M6",    "ED",   "M6")
+
+
+run_paired_interval_test <- function(data, time1, time2) {
+  
+  data_use <- data %>%
+    dplyr::filter(!is.na(.data[[time1]]),
+                  !is.na(.data[[time2]]))
+  
+  change_values <- data_use[[time2]] - data_use[[time1]]
+  
+  test <- t.test(data_use[[time2]], data_use[[time1]], paired = TRUE )
+  
+  tibble(
+    n = nrow(data_use),
+    
+    !!paste0("Avg ", time1) := mean(data_use[[time1]], na.rm = TRUE),
+    
+    !!paste0("Avg ", time2) := mean(data_use[[time2]], na.rm = TRUE),
+    
+    !!paste0("Avg Δ (", time2, " − ", time1, ")") := mean(change_values, na.rm = TRUE),
+    
+    SE = sd(change_values, na.rm = TRUE) / sqrt(sum(!is.na(change_values))),
+    
+    `T Stat` = unname(test$statistic),
+    
+    `P Value` = test$p.value,
+    
+    `95% CI` = paste0("[",round(test$conf.int[1], 3),", ", round(test$conf.int[2], 3),"]"))
+}
+
+intervals <- tribble(
+  ~Comparison,   ~time1, ~time2,
+  "ED_vs_WK2",   "ED",   "WK2",
+  "WK2_vs_M6",   "WK2",  "M6",
+  "ED_vs_M6",    "ED",   "M6")
+
+
+
+```
+
+## Between class 
+```{r}
+run_delta_test <- function(df, delta_var) {
+  
+  df_use <- df %>%
+    filter(!is.na(.data[[delta_var]]))
+
+  
+  test <- t.test(df_use[[delta_var]] ~ df_use$RRS_median_group)
+  
+  mean_High <- mean(df_use[[delta_var]][df_use$RRS_median_group == "High_RRS"], na.rm = TRUE)
+  mean_Low  <- mean(df_use[[delta_var]][df_use$RRS_median_group == "Low_RRS"], na.rm = TRUE)
+  
+  tibble(
+    n = nrow(df_use),
+    `High RRS Avg Δ` = mean_High,
+    `Low RRS Avg Δ` = mean_Low,
+    `Avg Δ (High − Low)` = mean_High - mean_Low,
+    SE = abs((mean_High - mean_Low) / unname(test$statistic)),
+    `T Stat` = unname(test$statistic),
+    `P Value` = test$p.value,
+    `95% CI` = paste0("[",round(test$conf.int[1], 3), ", ", round(test$conf.int[2], 3), "]") )
+}
+
+
+```
+
+
+

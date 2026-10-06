@@ -1,0 +1,253 @@
+---
+title: "Cytokine Data Preparation"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 1048-1275 ---- -->
+
+# CYTOKINES (ED, 2WK, 6M)
+
+## Prep data 
+```{r}
+# load cytokine data
+cytokine_data_full <- read_csv("Data/Cytokine Data/Data Files/Cytokines_1422.csv",
+                          show_col_types = FALSE)
+
+cytokine_data_full <- cytokine_data_full %>%
+  mutate(
+    PID = as.character(PID), 
+    Timepoint = case_when(
+      Time == "T0" ~ "ED",
+      Time == "T1" ~ "WK2",
+      Time %in% c("T2", "T3") ~ "M6",
+      TRUE ~ Time),
+    Batch = factor(BATCH),
+    Plate = gsub("\\)", "", Plate_new),
+    Plate = factor(Plate)) %>%
+  dplyr::select(-Plate_new)
+
+```
+
+## Batch effects 
+```{r}
+# cytokines to test
+cytokines_to_test <- c("IFN_gama_log", "IL_10_log", "IL_6_log", "IL_8_log", "TNF_alpha_log")
+
+
+cytokine_batch_plate_summary <- map_dfr(cytokines_to_test, function(cyt) {
+  
+  df <- cytokine_data_full %>%
+    dplyr::select(all_of(cyt), Batch, Plate, Timepoint) %>%
+    na.omit()
+  
+  # fit model
+  fit <- lm(reformulate(c("Batch", "Plate", "Timepoint"), response = cyt), data = df)
+  
+  # ANOVA 
+  aov_tbl <- anova(fit)
+  
+  # extract sums of squares
+  ss_total <- sum(aov_tbl$`Sum Sq`)
+  
+  # helper function
+  get_term_stats <- function(term_name) {
+      ss <- aov_tbl[term_name, "Sum Sq"]
+      p  <- aov_tbl[term_name, "Pr(>F)"]
+      df <- aov_tbl[term_name, "Df"]
+      tibble(
+        Term = term_name,
+        p.value = p,
+        df = df,
+        partial_R2 = ss / ss_total)
+  }
+  
+  term_stats <- bind_rows(
+    get_term_stats("Batch"),
+    get_term_stats("Plate"))
+  
+  # model-level stats
+  model_stats <- glance(fit)
+  
+  # data-level stats
+  data_stats <- tibble(
+    Cytokine = cyt,
+    n = nrow(df),
+    mean = mean(df[[cyt]], na.rm = TRUE),
+    sd = sd(df[[cyt]], na.rm = TRUE))
+  
+  term_stats %>%
+    mutate(Cytokine = cyt) %>%
+    left_join(data_stats, by = "Cytokine") %>%
+    mutate(
+      model_R2 = model_stats$r.squared,
+      adj_R2 = model_stats$adj.r.squared)
+  
+}) %>%
+  mutate(FDR = p.adjust(p.value, method = "BH")) %>%
+  arrange(p.value) %>%
+  mutate(Test = "ANOVA")
+
+
+write.csv(cytokine_batch_plate_summary, "Data/Cytokine Data/Analysis Data/Cytokine_Batch_Effect_Summary_3-23-2026.csv")
+
+cytokine_data_adjusted <- cytokine_data_full
+
+for (cyt in cytokines_to_test) {
+  
+  # define model per cytokine
+  # TNF alpha and IL8 were the only cytokines with Batch effects 
+  # all cytokines had plate effects 
+  if (cyt %in% c("TNF_alpha_log", "IL_8_log")) {
+    formula_terms <- c("Plate", "Batch")
+  } else {
+    formula_terms <- c("Plate")
+  }
+  
+  fit <- lm(reformulate(formula_terms, response = cyt),
+            data = cytokine_data_full)
+  
+  cytokine_data_adjusted[[cyt]] <- resid(fit) + 
+    mean(cytokine_data_full[[cyt]], na.rm = TRUE)
+}
+
+# check to make sure plate effects removed 
+# lm(IL_6_log ~ Plate, data = cytokine_data_adjusted) %>% summary()
+
+```
+
+## Data for analysis
+```{r}
+# clean up the matrix 
+cytokine_matrix_clean <- cytokine_data_adjusted %>%
+  dplyr::select(PID, Timepoint, all_of(cytokines_to_test)) %>%
+  dplyr::rename(
+    IFN_gama = IFN_gama_log,
+    IL_10 = IL_10_log,
+    IL_6 = IL_6_log,
+    IL_8 = IL_8_log,
+    TNF_alpha = TNF_alpha_log) %>%
+  arrange(PID, Timepoint) %>%
+  filter(PID %in% PIDs_245_ED6M)
+
+dim(cytokine_matrix_clean) # 475, 7 
+
+length(unique(cytokine_matrix_clean$PID)) # 240
+
+# subset to ED and 6M paired samples in RNA-seq
+cytokine_matrix_ED6M <- cytokine_matrix_clean %>%
+  filter(
+    PID %in% PIDs_245_ED6M,
+    Timepoint %in% c("ED", "M6")) %>%
+  group_by(PID) %>%
+  filter(n_distinct(Timepoint) == 2) %>%
+  ungroup() %>%
+  arrange(PID, Timepoint)
+
+dim(cytokine_matrix_ED6M) # 422 x 7 
+
+write.csv(cytokine_matrix_ED6M, "Data/Cytokine Data/Analysis Data/Cytokine_Data_ED6M_422_3-23-2026.csv")
+
+# subset to ED, WK2 and 6M paired samples in RNA-seq
+cytokine_matrix_ED2WK6M <- cytokine_matrix_clean %>%
+  filter(
+    PID %in% PIDs_40_ED2WK6M,
+    Timepoint %in% c("ED","WK2","M6")) %>%
+  group_by(PID) %>%
+  filter(n_distinct(Timepoint) == 3) %>%
+  ungroup() %>%
+  arrange(PID, Timepoint)
+
+dim(cytokine_matrix_ED2WK6M) # 51 x 7 
+
+write.csv(cytokine_matrix_ED2WK6M, "Data/Cytokine Data/Analysis Data/Cytokine_Data_ED2WK6M_51_3-23-2026.csv")
+```
+
+## Normality 
+```{r}
+# cytokines in the clean matrix
+cytokine_vars <- c("IFN_gama", "IL_10", "IL_6", "IL_8", "TNF_alpha")
+
+# sample set used in the clean adjusted matrix
+cytokine_overlap_ids <- cytokine_matrix_clean %>%
+  dplyr::select(PID, Timepoint) %>%
+  distinct()
+
+# matching raw cytokine data on the exact same PID x Timepoint rows
+cytokine_matrix_raw_overlap <- cytokine_data_full %>%
+  dplyr::select(PID, Timepoint, all_of(cytokine_vars)) %>%
+  semi_join(cytokine_overlap_ids, by = c("PID", "Timepoint")) %>%
+  arrange(PID, Timepoint)
+
+# matching adjusted cytokine data
+cytokine_matrix_adjusted_overlap <- cytokine_matrix_clean %>%
+  dplyr::select(PID, Timepoint, all_of(cytokine_vars)) %>%
+  arrange(PID, Timepoint)
+
+
+summarize_wide_cytokines <- function(df, vars) {
+  df %>%
+    summarise(
+      across(
+        all_of(vars),
+        list(
+          N = ~ sum(is.finite(.x)),
+          Mean = ~ mean(.x, na.rm = TRUE),
+          Median = ~ median(.x, na.rm = TRUE),
+          SD = ~ sd(.x, na.rm = TRUE),
+          Skewness = ~ e1071::skewness(.x, na.rm = TRUE, type = 2),
+          Kurtosis = ~ e1071::kurtosis(.x, na.rm = TRUE, type = 2)),
+        .names = "{.col}::{.fn}")) %>%
+    tidyr::pivot_longer(
+      everything(),
+      names_to = c("Cytokine", ".value"),
+      names_sep = "::") %>%
+    relocate(Cytokine)
+}
+
+# RAW
+cytokine_stats_raw <- cytokine_matrix_raw_overlap %>%
+  dplyr::select(all_of(cytokine_vars)) %>%
+  summarize_wide_cytokines(vars = cytokine_vars) %>%
+  mutate(Scale = "Raw") %>%
+  relocate(Scale, .after = Cytokine)
+
+# ADJUSTED
+cytokine_stats_adjusted <- cytokine_matrix_adjusted_overlap %>%
+  dplyr::select(all_of(cytokine_vars)) %>%
+  summarize_wide_cytokines(vars = cytokine_vars) %>%
+  mutate(Scale = "Log_Adjusted") %>%
+  relocate(Scale, .after = Cytokine)
+
+# COMBINED
+cytokine_stats_compare <- bind_rows(
+  cytokine_stats_raw,
+  cytokine_stats_adjusted %>%
+  mutate(Scale = factor(Scale, levels = c("Raw", "Log_Adjusted"))) %>%
+  arrange(Cytokine, Scale)) %>%
+  arrange(Cytokine)
+
+cytokine_stats_compare
+
+write.csv(cytokine_stats_compare, "Data/Cytokine Data/Analysis Data/Cytokine_Data_Stat_Summary_3-23-2026.csv", row.names = FALSE)
+
+```
+
+
+

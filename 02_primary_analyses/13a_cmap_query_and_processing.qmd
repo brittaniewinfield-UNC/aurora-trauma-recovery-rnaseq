@@ -1,0 +1,821 @@
+---
+title: "Drug Perturbation (CMap/CLUE) Analysis: Gene Sets, Query, Result Processing"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 6885-7680 ---- -->
+
+# CMAP ANALYSIS 
+The most fundamental analysis performed on the CMap/LINCS resource is the ‘query’ in which an external gene set is compared for similarity against all the perturbational signatures in the resource (see Lamb et al 2006 and Subramanian et al 2017). The web application at clue.io/query enables this form of analysis, where a user can submit their query gene set for analysis and get back a list of reference signatures ordered by their similarity to the query. Given the expanded size of the updated resource, the query methodology has been duly updated to avoid the need for a precomputed background distribution of connectivity scores for each reference signature, as was required in the tau computation, described in Subramanian et al 2017, though the tau method can still be accessed by selecting the ‘1.0’ option in the dropdown menu at clue.io/query. The updated algorithm, which is accessed by selecting the ‘latest’ option in the dropdown menu, proceeds as follows:
+
+
+1. Compute the weighted enrichment score (WTCS) between the query and each of the >1M level 5 reference signatures, as in Subramanian et al 2017.
+2. Normalize the WTCS values by dividing by the signed mean within each subset of the reference signatures, grouped by cell line and perturbagen type. This yields normalized connectivity scores (NCS) as in Subramanian et al 2017.
+3. For each reference signature, compute a false discovery rate (FDR) as the fraction of ‘null signatures’ (signatures of negative controls such as DMSO and null vectors) whose absolute NCS values exceed that of the reference signature in question.
+4. Perform a GSEA-like analysis on the primary query results. Compute second-order NCS values for sets of signatures grouped by common annotation (i.e. compounds belonging to the same mechanistic class or genes belonging to the same pathway). This is analogous to the Perturbagen Class (PCL) analysis described in Submramanian et al 2017, and all of the PCL sets described in that publication are also used in the updated methodology, as well as many additional signature sets corresponding to mechanistic classes and pathways.
+5. For each signature set, generate 1,000 permuted sets of the same size as the given set, compute second-order NCS values for each, then compute the FDR as the fraction of the permuted NCS values whose absolute value exceeds that of the signature set in question.
+
+Hence, each query produces two key output matrices, which can be accessed through the history app at clue.io/history, and then displayed in the Morpheus heatmap viewer. The ‘query_result’ view is a one-column matrix where the values are the NCS and the raw WTCS and the negative log10 of the FDR are displayed as row annotations named ‘raw_cs’ and ‘fdr_q_nlog10’, respectively. The matrix contains a curated set of ~420k exemplar signatures, which were chosen to mitigate the redundancy in the full dataset. Each exemplar signature corresponds to a unique perturbagen / cell line combination. The full results relative to the entire dataset are available for download from the history app. The ‘gsea_result’ view is a one-column matrix where the values are the NCS and the negative log10 of the FDR is displayed as a row annotation named ‘fdr_q_nlog10’. There is one row for each unique signature set, though the cell lines are kept separate so the same mechanism or pathway may appear multiple times, each in a different cell line. These results are also available for download from the history app.
+
+## Gene sets for CLUE Query 
+
+### ED-M6
+```{r}
+BING_genes <- read.csv("CMap Analyses Updated/BING_genes.csv")
+table(BING_genes$Inference.Category)
+
+BING_genes_list <- BING_genes %>%
+  filter(Inference.Category == "Best Inferred (BING)") %>%
+  pull(Gene.Symbol)
+
+## Gene sets for CLUE
+shared_DEGs_summary <- read.csv("Differential Expression Analyses/Summaries/Shared DEGs Across APNS Summary Stats.csv")
+
+top_sizes <- c(25, 50, 75, 100)
+
+# keep only significant genes that are in BING space
+shared_DEGs_summary_sig <- shared_DEGs_summary %>%
+  filter(Avg_adj.P.Val < 0.01, Gene %in% BING_genes_list)
+
+# top genes higher at ED (negative logFC)
+top_ED <- shared_DEGs_summary_sig %>%
+  filter(Avg_logFC < 0) %>%
+  arrange(desc(abs(Avg_logFC)))
+
+# top genes higher at WK2 (positive logFC)
+top_M6 <- shared_DEGs_summary_sig %>%
+  filter(Avg_logFC > 0) %>%
+  arrange(desc(abs(Avg_logFC)))
+
+out_dir <- "CMap Analysis Final/CLUE Gene Sets"
+
+for (n in top_sizes) {
+  
+  genes_ED <- top_ED %>% slice_head(n = n) %>% pull(Gene)
+  genes_M6 <- top_M6 %>% slice_head(n = n) %>% pull(Gene)
+  
+  writeLines(genes_ED, con = file.path(out_dir, paste0("top", n, "_ED_up.grp")))
+  writeLines(genes_M6, con = file.path(out_dir, paste0("top", n, "_M6_up.grp")))
+}
+
+
+out_dir <- "CMap Analysis Final/CLUE Gene Sets"
+top_sizes <- c(50, 75, 100)
+
+cmap_gene_sets_excel <- top_sizes %>%
+  set_names(paste0("Top", .)) %>%
+  map(function(n) {
+    bind_rows(
+      top_ED %>%
+        slice_head(n = n) %>%
+        transmute(Gene, Direction = "ED_up"),
+      
+      top_M6 %>%
+        slice_head(n = n) %>%
+        transmute(Gene, Direction = "M6_up"))
+  })
+
+write.xlsx(
+  cmap_gene_sets_excel,
+  file = file.path(out_dir, "CMap_CLUE_gene_sets.xlsx"),
+  overwrite = TRUE
+)
+```
+
+### ED - WK2 
+```{r}
+ED_WK2_genes <- read.csv("2WK Analyses/Differential Expression Analyses/Results/DEA_High_RRS_ED_vs_WK2.csv")
+
+ED_WK2_genes_sig <- ED_WK2_genes %>%
+  filter(adj.P.Val < 0.05, Gene %in% BING_genes_list)
+
+# top genes higher at ED: negative logFC
+top_ED_WK2_ED <- ED_WK2_genes_sig %>%
+  filter(logFC < 0) %>%
+  arrange(desc(abs(logFC)))
+
+# top genes higher at WK2: positive logFC
+top_ED_WK2_WK2 <- ED_WK2_genes_sig %>%
+  filter(logFC > 0) %>%
+  arrange(desc(abs(logFC)))
+
+out_dir <- "CMap Analysis Final/CLUE Gene Sets/ED-WK2"
+
+
+for (n in top_sizes) {
+  
+  genes_ED <- top_ED_WK2_ED %>% 
+    slice_head(n = n) %>% 
+    pull(Gene)
+  
+  genes_WK2 <- top_ED_WK2_WK2 %>% 
+    slice_head(n = n) %>% 
+    pull(Gene)
+  
+  writeLines(genes_ED, con = file.path(out_dir, paste0("top", n, "_ED_up.grp")))
+  writeLines(genes_WK2, con = file.path(out_dir, paste0("top", n, "_WK2_up.grp")))
+}
+
+```
+
+
+
+
+
+## Process CLUE results 
+```{r}
+# Map Entrez -> SYMBOL
+map_symbol <- function(x) {
+  mapIds(org.Hs.eg.db, keys = x, keytype = "ENTREZID", column = "SYMBOL", multiVals = "first") %>%
+    unname()
+}
+
+# Aggregate signature-level results to compound-level summaries
+compute_compound_stability <- function(sig_df, min_sigs_per_compound = 4) {
+
+  sig_df_clean <- sig_df %>%
+    mutate(moa_clean = na_if(moa, "-666"),
+           target_clean = na_if(target_name, "-666"))
+
+  sig_df_clean %>%
+    group_by(pert_iname) %>%
+    summarise(
+      n_quality_sigs = n(),
+      n_cell_lines = n_distinct(cell_iname),
+      median_NCS = median(ncs, na.rm = TRUE),
+      IQR_NCS = IQR(ncs, na.rm = TRUE),
+      sd_NCS = sd(ncs, na.rm = TRUE),
+      min_NCS = min(ncs, na.rm = TRUE),
+      max_NCS = max(ncs, na.rm = TRUE),
+      median_TAS = median(tas, na.rm = TRUE),
+      sd_TAS = sd(tas, na.rm = TRUE),
+      median_fdr_q_nlog10 = median(fdr_q_nlog10, na.rm = TRUE),
+      max_fdr_q_nlog10 = max(fdr_q_nlog10, na.rm = TRUE),
+      MOA = {vals <- unique(stats::na.omit(moa_clean))
+        if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")},
+      Targets = {vals <- unique(stats::na.omit(target_clean))
+        if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")},
+      .groups = "drop") %>%
+    filter(n_quality_sigs >= min_sigs_per_compound)
+}
+
+# Main workflow for one CMap analysis using latest CLUE query output
+run_cmap_workflow <- function(analysis_name, up_gmt, down_gmt, query_result_file, cellinfo_file = NULL, TAS_min = 0.2,
+                                     min_sigs_per_compound = 4, fdr_q_nlog10_min = NULL, 
+                                     exclude_lineages = c("central_nervous_system","autonomic_ganglia", "placenta", "unknown"),
+                                     out_dir = NULL) {
+
+  # Load CMap input genes used in the query
+  Cmap_up_genes <- unique(unlist(gmtPathways(up_gmt)))
+  Cmap_up_genes <- map_symbol(Cmap_up_genes)
+  
+  Cmap_down_genes <- unique(unlist(gmtPathways(down_gmt)))
+  Cmap_down_genes <- map_symbol(Cmap_down_genes)
+
+  all_cmap_input <- c(Cmap_up_genes, Cmap_down_genes)
+
+  # Read query_result.gct
+  GCT <- parse_gctx(query_result_file)
+
+  CMap_results <- cbind(GCT@rdesc, ncs = as.numeric(GCT@mat[, 1])) %>%
+    as_tibble()
+
+  # Add FDR if present as -log10(FDR)
+    CMap_results <- CMap_results %>% mutate(fdr_q_nlog10 = as.numeric(fdr_q_nlog10))
+
+  # Add raw WTCS if present
+    CMap_results <- CMap_results %>%
+      mutate(raw_cs = as.numeric(raw_cs))
+
+  # Convert FDR back to standard scale if available
+  CMap_results <- CMap_results %>%
+    mutate(fdr_q = 10^(-fdr_q_nlog10))
+
+  cellinfo <- read.delim(cellinfo_file, sep = "\t", quote = "", stringsAsFactors = FALSE)
+
+  CMap_results_annotated <- CMap_results %>%
+      left_join(cellinfo %>% dplyr::select(cell_iname, cell_lineage, primary_disease, cell_type, ccle_name),
+        by = "cell_iname")
+
+  CMap_results_annotated <- CMap_results_annotated %>%
+      filter(!(cell_lineage %in% exclude_lineages))
+
+  CMap_results_significant_compounds <- CMap_results_annotated %>%
+    filter(pert_type == "trt_cp") %>%
+    mutate(qc_pass = as.integer(qc_pass),
+           is_ncs_sig = as.integer(is_ncs_sig),
+           tas = as.numeric(tas),
+           ncs = as.numeric(ncs)) %>%
+    filter(qc_pass == 1, is_ncs_sig == 1, tas >= TAS_min)
+
+  strong_mimickers <- CMap_results_significant_compounds %>%
+    filter(ncs >= 1)
+
+  moderate_mimickers <- CMap_results_significant_compounds %>%
+    filter(ncs >= 0.5)
+
+  strong_opposers <- CMap_results_significant_compounds %>%
+    filter(ncs <= -1)
+
+  moderate_opposers <- CMap_results_significant_compounds %>%
+    filter(ncs <= -0.5)
+
+  CMap_results_sig_comp_ranked <- CMap_results_significant_compounds %>%
+    arrange(desc(ncs)) %>%
+    dplyr::select(sig_id = id, pert_iname, cell_iname, dplyr::any_of(c("cell_lineage", "primary_disease", "cell_type", "ccle_name")),
+                  pert_idose, pert_itime, raw_cs, ncs, fdr_q_nlog10, fdr_q, tas, moa, target_name)
+
+  mimickers_compound_stability <- CMap_results_significant_compounds %>%
+    filter(ncs > 0) %>%
+    compute_compound_stability(min_sigs_per_compound = min_sigs_per_compound) %>%
+    arrange(desc(median_NCS), desc(median_fdr_q_nlog10))
+
+  opposers_compound_stability <- CMap_results_significant_compounds %>%
+    filter(ncs < 0) %>%
+    compute_compound_stability(min_sigs_per_compound = min_sigs_per_compound) %>%
+    arrange(median_NCS, desc(median_fdr_q_nlog10))
+
+  if (!is.null(out_dir)) {
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+    write.csv(CMap_results_sig_comp_ranked,file.path(out_dir, paste0(analysis_name, "_Signature_Level_Ranked.csv")), row.names = FALSE)
+    write.csv(mimickers_compound_stability, file.path(out_dir, paste0(analysis_name, "_Mimicker_Compound_Aggregation.csv")), row.names = FALSE)
+    write.csv(opposers_compound_stability, file.path(out_dir, paste0(analysis_name, "_Opposer_Compound_Aggregation.csv")), row.names = FALSE)
+  }
+
+  list(analysis_name = analysis_name,
+    cmap_up_genes = Cmap_up_genes,
+    cmap_down_genes = Cmap_down_genes,
+    all_cmap_input = all_cmap_input,
+    CMap_results = CMap_results,
+    CMap_results_annotated = CMap_results_annotated,
+    CMap_results_significant_compounds = CMap_results_significant_compounds,
+    strong_mimickers = strong_mimickers,
+    moderate_mimickers = moderate_mimickers,
+    strong_opposers = strong_opposers,
+    moderate_opposers = moderate_opposers,
+    CMap_results_sig_comp_ranked = CMap_results_sig_comp_ranked,
+    mimickers_compound_stability = mimickers_compound_stability,
+    opposers_compound_stability = opposers_compound_stability)
+}
+```
+
+### ED - M6
+```{r}
+cmap_res_top25 <- run_cmap_workflow(
+  analysis_name = "EDM6_Top25",
+  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/up.gmt",
+  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/down.gmt",
+  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top25")
+
+cmap_res_top50 <- run_cmap_workflow(
+  analysis_name = "EDM6_Top50",
+  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/up.gmt",
+  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/down.gmt",
+  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top50")
+
+cmap_res_top75 <- run_cmap_workflow(
+  analysis_name = "EDM6_Top75",
+  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/up.gmt",
+  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/down.gmt",
+  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top75")
+
+cmap_res_top100 <- run_cmap_workflow(
+  analysis_name = "EDM6_Top100",
+  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/up.gmt",
+  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/down.gmt",
+  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top100")
+
+
+all_cmap_results <- list(Top50 = cmap_res_top50,
+                         Top75 = cmap_res_top75, Top100 = cmap_res_top100)
+
+
+all_cmap_results$Top50$CMap_results_sig_comp_ranked
+all_cmap_results$Top50$mimickers_compound_stability
+
+compound_stability_combined <- all_cmap_results[c("Top50", "Top75", "Top100")] %>%
+  purrr::imap_dfr(~ bind_rows(
+    .x$mimickers_compound_stability %>%
+      mutate(Direction = "Mimicker"),
+    .x$opposers_compound_stability %>%
+      mutate(Direction = "Opposer")) %>%
+    mutate(
+      Gene_Set = readr::parse_number(.y),
+      .before = 1)) %>%
+  mutate(Median_FDR = 10^(-median_fdr_q_nlog10), 
+        NCS_Range = sprintf("[%.3f - %.3f]", min_NCS, max_NCS)) %>%
+  dplyr::select(Gene_Set, Direction, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, NCS_Range, Median_FDR, median_TAS, MOA, Targets) %>%
+  arrange(Gene_Set, Direction, desc(median_NCS)) %>%
+    dplyr::rename(
+    `Gene Set Size` = Gene_Set,
+    `Connectivity Direction` = Direction,
+    `Compound` = pert_iname,
+    `Number of Quality Signatures` = n_quality_sigs,
+    `Number of Cell Lines` = n_cell_lines,
+    `Median NCS` = median_NCS,
+    `NCS Range` = NCS_Range,
+    ` Median_FDR` =Median_FDR, 
+    `Median TAS` = median_TAS,
+    `Mechanism of Action` = MOA,
+    `Targets` = Targets)
+
+
+write.csv(compound_stability_combined, "CMap Analysis Final/CMap Processed Results/Summaries/EDM6_Compounds_Combined.csv")
+
+```
+
+
+
+### Export mimickers and opposers
+```{r}
+
+# EXPORT SIGNATURE RESULTS ----------------------------------------------------------
+
+wb <- createWorkbook()
+
+purrr::iwalk(all_cmap_results, function(res, analysis_name) {
+  
+  df <- res$CMap_results_sig_comp_ranked %>%
+    arrange(desc(abs(ncs)), desc(fdr_q_nlog10)) %>%
+    mutate(analysis = analysis_name) 
+  
+  addWorksheet(wb, sheetName = analysis_name)
+  writeData(wb, sheet = analysis_name, x = df)
+  
+  addStyle(wb, sheet = analysis_name, style = header_style, rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
+  
+  addStyle(wb, sheet = analysis_name, style = body_style, rows = 2:(nrow(df) + 1), cols = 1:ncol(df), gridExpand = TRUE)
+    
+  num_cols <- which(names(df) %in% c("raw_cs", "ncs", "fdr_q_nlog10", "fdr_q", "tas"))
+    
+  addStyle(wb, sheet = analysis_name, style = num_style, rows = 2:(nrow(df) + 1), cols = num_cols, gridExpand = TRUE)
+  
+  setColWidths(wb, sheet = analysis_name, cols = 1:ncol(df), widths = "auto")
+  freezePane(wb, sheet = analysis_name, firstRow = TRUE)
+})
+
+saveWorkbook(wb, file = "CMap Analysis Final/CMap Processed Results/Summaries/EDM6_Signatures_Combined.xlsx", overwrite = TRUE)
+
+# EXPORT COMPOUND RESULTS ----------------------------------------------------------
+
+# MIMICKERS ---------------------------------------------------------------
+wb_mim <- createWorkbook()
+
+purrr::iwalk(all_cmap_results, function(res, analysis_name) {
+  
+  df <- res$mimickers_compound_stability %>%
+    arrange(desc(median_NCS), desc(median_fdr_q_nlog10)) %>%
+    mutate(analysis = analysis_name) %>%
+    dplyr::select(analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
+                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10,  max_fdr_q_nlog10, MOA, Targets)
+  
+  addWorksheet(wb_mim, sheetName = analysis_name)
+  writeData(wb_mim, sheet = analysis_name, x = df)
+  
+  addStyle(wb_mim, sheet = analysis_name, style = header_style, rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
+  
+  addStyle(wb_mim, sheet = analysis_name, style = body_style, rows = 2:(nrow(df) + 1), cols = 1:ncol(df), gridExpand = TRUE)
+    
+  num_cols <- which(names(df) %in% c("median_NCS", "IQR_NCS", "sd_NCS", "min_NCS", "max_NCS",
+                                       "median_TAS", "sd_TAS", "median_fdr_q_nlog10", "max_fdr_q_nlog10"))
+    
+  addStyle(wb_mim, sheet = analysis_name, style = num_style, rows = 2:(nrow(df) + 1), cols = num_cols, gridExpand = TRUE)
+  
+  setColWidths(wb_mim, sheet = analysis_name, cols = 1:ncol(df), widths = "auto")
+  freezePane(wb_mim, sheet = analysis_name, firstRow = TRUE)
+})
+
+saveWorkbook(wb_mim, file = "CMap Analysis Final/CMap Processed Results/Summaries/EDM6_Mimickers_Combined.xlsx", overwrite = TRUE)
+
+# OPPOSERS ---------------------------------------------------------------
+
+wb_opp <- createWorkbook()
+
+purrr::iwalk(all_cmap_results, function(res, analysis_name) {
+  
+  df <- res$opposers_compound_stability %>%
+    arrange(median_NCS, desc(median_fdr_q_nlog10)) %>%
+    mutate(analysis = analysis_name) %>%
+    dplyr::select(analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
+                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
+  
+  addWorksheet(wb_opp, sheetName = analysis_name)
+  writeData(wb_opp, sheet = analysis_name, x = df)
+  
+  addStyle(wb_opp, sheet = analysis_name, style = header_style, rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
+  
+  addStyle(wb_opp, sheet = analysis_name, style = body_style, rows = 2:(nrow(df) + 1), cols = 1:ncol(df), gridExpand = TRUE)
+    
+  num_cols <- which(names(df) %in% c("median_NCS", "IQR_NCS", "sd_NCS", "min_NCS", "max_NCS",
+                                     "median_TAS", "sd_TAS", "median_fdr_q_nlog10", "max_fdr_q_nlog10"))
+    
+  addStyle(wb_opp, sheet = analysis_name, style = num_style, rows = 2:(nrow(df) + 1), cols = num_cols, gridExpand = TRUE)
+  
+  setColWidths(wb_opp, sheet = analysis_name, cols = 1:ncol(df), widths = "auto")
+  freezePane(wb_opp, sheet = analysis_name, firstRow = TRUE)
+})
+
+saveWorkbook(wb_opp, file = "CMap Analysis Final/CMap Processed Results/Summaries/EDM6_Opposers_Combined.xlsx", overwrite = TRUE)
+
+# OVERLAP -----------------------------------------------------------------
+
+# MIMICKERS ---------------------------------------------------------------
+
+all_mimickers_long <- purrr::imap_dfr(all_cmap_results, function(res, analysis_name) {
+  res$mimickers_compound_stability %>%
+    mutate(analysis = analysis_name, list_type = "Mimicker") %>%
+    dplyr::select(list_type, analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS,
+                  min_NCS, max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
+})
+
+mimicker_presence_long <- all_mimickers_long %>%
+  distinct(pert_iname, analysis, .keep_all = TRUE)
+
+mimicker_presence_wide <- mimicker_presence_long %>%
+  mutate(present = 1) %>%
+  dplyr::select(pert_iname, analysis, present) %>%
+  pivot_wider(names_from = analysis, values_from = present, values_fill = 0)
+
+mimicker_summary <- mimicker_presence_long %>%
+  group_by(pert_iname) %>%
+  summarise(
+    list_type = "Mimicker",
+    analyses_present = paste(sort(unique(analysis)), collapse = ", "),
+    n_analyses_present = n_distinct(analysis),
+    MOA = {
+      vals <- unique(na.omit(MOA))
+      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+    },
+    Targets = {
+      vals <- unique(na.omit(Targets))
+      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+    },
+    median_of_median_NCS = median(median_NCS, na.rm = TRUE),
+    extreme_median_NCS = max(median_NCS, na.rm = TRUE),
+    median_of_median_TAS = median(median_TAS, na.rm = TRUE),
+    median_of_median_fdr_q_nlog10 = median(median_fdr_q_nlog10, na.rm = TRUE),
+    median_n_quality_sigs = median(n_quality_sigs, na.rm = TRUE),
+    median_n_cell_lines = median(n_cell_lines, na.rm = TRUE),
+    .groups = "drop")
+
+# OPPOSERS  ---------------------------------------------------------------
+
+all_opposers_long <- purrr::imap_dfr(all_cmap_results, function(res, analysis_name) {
+  res$opposers_compound_stability %>%
+    mutate(analysis = analysis_name, list_type = "Opposer") %>%
+    dplyr::select(list_type, analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
+                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
+})
+
+opposer_presence_long <- all_opposers_long %>%
+  distinct(pert_iname, analysis, .keep_all = TRUE)
+
+opposer_presence_wide <- opposer_presence_long %>%
+  mutate(present = 1) %>%
+  dplyr::select(pert_iname, analysis, present) %>%
+  pivot_wider(names_from = analysis, values_from = present, values_fill = 0)
+
+opposer_summary <- opposer_presence_long %>%
+  group_by(pert_iname) %>%
+  summarise(
+    list_type = "Opposer",
+    analyses_present = paste(sort(unique(analysis)), collapse = ", "),
+    n_analyses_present = n_distinct(analysis),
+    MOA = {
+      vals <- unique(na.omit(MOA))
+      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+    },
+    Targets = {
+      vals <- unique(na.omit(Targets))
+      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+    },
+    median_of_median_NCS = median(median_NCS, na.rm = TRUE),
+    extreme_median_NCS = min(median_NCS, na.rm = TRUE),
+    median_of_median_TAS = median(median_TAS, na.rm = TRUE),
+    median_of_median_fdr_q_nlog10 = median(median_fdr_q_nlog10, na.rm = TRUE),
+    median_n_quality_sigs = median(n_quality_sigs, na.rm = TRUE),
+    median_n_cell_lines = median(n_cell_lines, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# COMBINED ---------------------------------------------------------------
+
+combined_summary <- bind_rows(mimicker_summary, opposer_summary)
+
+compound_overlap_flag <- combined_summary %>%
+  distinct(pert_iname, list_type) %>%
+  dplyr::count(pert_iname, name = "n_lists") %>%
+  mutate(identified_in_both_lists = n_lists == 2) %>%
+  dplyr::select(pert_iname, identified_in_both_lists)
+
+combined_summary <- combined_summary %>%
+  left_join(compound_overlap_flag, by = "pert_iname") %>%
+  mutate(
+    overlap_status = case_when(
+      identified_in_both_lists ~ "Both",
+      list_type == "Mimicker" ~ "Mimicker only",
+      list_type == "Opposer" ~ "Opposer only",
+      TRUE ~ NA_character_)) %>%
+  arrange(desc(identified_in_both_lists), pert_iname, list_type)
+
+mimicker_summary_2 <- combined_summary %>%
+  filter(list_type == "Mimicker") %>%
+  dplyr::rename(Type = list_type) %>%
+  arrange(desc(n_analyses_present), desc(median_of_median_NCS))
+
+opposer_summary_2 <- combined_summary %>%
+  filter(list_type == "Opposer") %>%
+  dplyr::rename(Type = list_type) %>%
+  arrange(desc(n_analyses_present), median_of_median_NCS)
+
+
+# WRITE TO EXCEL ---------------------------------------------------------------
+
+out_file <- "CMap Analysis Final/CMap Processed Results/Summaries/EDM6_Overlap_Summary.xlsx"
+
+wb <- createWorkbook()
+
+addWorksheet(wb, "Mimicker_Summary")
+writeData(wb, "Mimicker_Summary", mimicker_summary_2)
+
+addWorksheet(wb, "Opposer_Summary")
+writeData(wb, "Opposer_Summary", opposer_summary_2)
+
+saveWorkbook(wb, out_file, overwrite = TRUE)
+
+
+combined_summary %>%
+  arrange(desc(n_analyses_present), list_type, desc(median_of_median_NCS))
+
+```
+
+### ED - WK2 
+```{r}
+cmap_res_top25 <- run_cmap_workflow(
+  analysis_name = "EDWK2_Top25",
+  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 25/up.gmt", 
+  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 25/down.gmt", 
+  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 25/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis Final/CMap Processed Results/ED-WK2 Results/EDWK2_Top25")
+
+cmap_res_top50 <- run_cmap_workflow(
+  analysis_name = "EDWK2_Top50",
+  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 50/up.gmt", 
+  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 50/down.gmt", 
+  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 50/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis Final/CMap Processed Results/ED-WK2 Results/EDWK2_Top50")
+
+
+cmap_res_top75 <- run_cmap_workflow(
+  analysis_name = "EDWK2_Top75",
+  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 75/up.gmt", 
+  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 75/down.gmt", 
+  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 75/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis Final/CMap Processed Results/ED-WK2 Results/EDWK2_Top75")
+
+
+cmap_res_top100 <- run_cmap_workflow(
+  analysis_name = "EDWK2_Top100",
+  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 100/up.gmt", 
+  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 100/down.gmt", 
+  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 100/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis Final/CMap Processed Results/ED-WK2 Results/EDWK2_Top100")
+
+
+
+all_cmap_results <- list(Top50 = cmap_res_top50,
+                         Top75 = cmap_res_top75, Top100 = cmap_res_top100)
+
+
+# EXPORT RESULTS ----------------------------------------------------------
+
+# MIMICKERS ---------------------------------------------------------------
+wb_mim <- createWorkbook()
+
+purrr::iwalk(all_cmap_results, function(res, analysis_name) {
+  
+  df <- res$mimickers_compound_stability %>%
+    arrange(desc(median_NCS), desc(median_fdr_q_nlog10)) %>%
+    mutate(analysis = analysis_name) %>%
+    dplyr::select(analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
+                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10,  max_fdr_q_nlog10, MOA, Targets)
+  
+  addWorksheet(wb_mim, sheetName = analysis_name)
+  writeData(wb_mim, sheet = analysis_name, x = df)
+  
+  addStyle(wb_mim, sheet = analysis_name, style = header_style, rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
+  
+  addStyle(wb_mim, sheet = analysis_name, style = body_style, rows = 2:(nrow(df) + 1), cols = 1:ncol(df), gridExpand = TRUE)
+    
+  num_cols <- which(names(df) %in% c("median_NCS", "IQR_NCS", "sd_NCS", "min_NCS", "max_NCS",
+                                       "median_TAS", "sd_TAS", "median_fdr_q_nlog10", "max_fdr_q_nlog10"))
+    
+  addStyle(wb_mim, sheet = analysis_name, style = num_style, rows = 2:(nrow(df) + 1), cols = num_cols, gridExpand = TRUE)
+  
+  setColWidths(wb_mim, sheet = analysis_name, cols = 1:ncol(df), widths = "auto")
+  freezePane(wb_mim, sheet = analysis_name, firstRow = TRUE)
+})
+
+saveWorkbook(wb_mim, file = "CMap Analysis Final/CMap Processed Results/Summaries/EDWK2_Mimickers_Combined.xlsx", overwrite = TRUE)
+
+# OPPOSERS ---------------------------------------------------------------
+
+wb_opp <- createWorkbook()
+
+purrr::iwalk(all_cmap_results, function(res, analysis_name) {
+  
+  df <- res$opposers_compound_stability %>%
+    arrange(median_NCS, desc(median_fdr_q_nlog10)) %>%
+    mutate(analysis = analysis_name) %>%
+    dplyr::select(analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
+                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
+  
+  addWorksheet(wb_opp, sheetName = analysis_name)
+  writeData(wb_opp, sheet = analysis_name, x = df)
+  
+  addStyle(wb_opp, sheet = analysis_name, style = header_style, rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
+  
+  addStyle(wb_opp, sheet = analysis_name, style = body_style, rows = 2:(nrow(df) + 1), cols = 1:ncol(df), gridExpand = TRUE)
+    
+  num_cols <- which(names(df) %in% c("median_NCS", "IQR_NCS", "sd_NCS", "min_NCS", "max_NCS",
+                                     "median_TAS", "sd_TAS", "median_fdr_q_nlog10", "max_fdr_q_nlog10"))
+    
+  addStyle(wb_opp, sheet = analysis_name, style = num_style, rows = 2:(nrow(df) + 1), cols = num_cols, gridExpand = TRUE)
+  
+  setColWidths(wb_opp, sheet = analysis_name, cols = 1:ncol(df), widths = "auto")
+  freezePane(wb_opp, sheet = analysis_name, firstRow = TRUE)
+})
+
+saveWorkbook(wb_opp, file = "CMap Analysis Final/CMap Processed Results/Summaries/EDWK2_Opposers_Combined.xlsx", overwrite = TRUE)
+
+# OVERLAP -----------------------------------------------------------------
+
+# MIMICKERS ---------------------------------------------------------------
+
+all_mimickers_long <- purrr::imap_dfr(all_cmap_results, function(res, analysis_name) {
+  res$mimickers_compound_stability %>%
+    mutate(analysis = analysis_name, list_type = "Mimicker") %>%
+    dplyr::select(list_type, analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS,
+                  min_NCS, max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
+})
+
+mimicker_presence_long <- all_mimickers_long %>%
+  distinct(pert_iname, analysis, .keep_all = TRUE)
+
+mimicker_presence_wide <- mimicker_presence_long %>%
+  mutate(present = 1) %>%
+  dplyr::select(pert_iname, analysis, present) %>%
+  pivot_wider(names_from = analysis, values_from = present, values_fill = 0)
+
+mimicker_summary <- mimicker_presence_long %>%
+  group_by(pert_iname) %>%
+  summarise(
+    list_type = "Mimicker",
+    analyses_present = paste(sort(unique(analysis)), collapse = ", "),
+    n_analyses_present = n_distinct(analysis),
+    MOA = {
+      vals <- unique(na.omit(MOA))
+      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+    },
+    Targets = {
+      vals <- unique(na.omit(Targets))
+      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+    },
+    median_of_median_NCS = median(median_NCS, na.rm = TRUE),
+    extreme_median_NCS = max(median_NCS, na.rm = TRUE),
+    median_of_median_TAS = median(median_TAS, na.rm = TRUE),
+    median_of_median_fdr_q_nlog10 = median(median_fdr_q_nlog10, na.rm = TRUE),
+    median_n_quality_sigs = median(n_quality_sigs, na.rm = TRUE),
+    median_n_cell_lines = median(n_cell_lines, na.rm = TRUE),
+    .groups = "drop")
+
+# OPPOSERS  ---------------------------------------------------------------
+
+all_opposers_long <- purrr::imap_dfr(all_cmap_results, function(res, analysis_name) {
+  res$opposers_compound_stability %>%
+    mutate(analysis = analysis_name, list_type = "Opposer") %>%
+    dplyr::select(list_type, analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
+                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
+})
+
+opposer_presence_long <- all_opposers_long %>%
+  distinct(pert_iname, analysis, .keep_all = TRUE)
+
+opposer_presence_wide <- opposer_presence_long %>%
+  mutate(present = 1) %>%
+  dplyr::select(pert_iname, analysis, present) %>%
+  pivot_wider(names_from = analysis, values_from = present, values_fill = 0)
+
+opposer_summary <- opposer_presence_long %>%
+  group_by(pert_iname) %>%
+  summarise(
+    list_type = "Opposer",
+    analyses_present = paste(sort(unique(analysis)), collapse = ", "),
+    n_analyses_present = n_distinct(analysis),
+    MOA = {
+      vals <- unique(na.omit(MOA))
+      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+    },
+    Targets = {
+      vals <- unique(na.omit(Targets))
+      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
+    },
+    median_of_median_NCS = median(median_NCS, na.rm = TRUE),
+    extreme_median_NCS = min(median_NCS, na.rm = TRUE),
+    median_of_median_TAS = median(median_TAS, na.rm = TRUE),
+    median_of_median_fdr_q_nlog10 = median(median_fdr_q_nlog10, na.rm = TRUE),
+    median_n_quality_sigs = median(n_quality_sigs, na.rm = TRUE),
+    median_n_cell_lines = median(n_cell_lines, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# COMBINED ---------------------------------------------------------------
+
+combined_summary <- bind_rows(mimicker_summary, opposer_summary)
+
+compound_overlap_flag <- combined_summary %>%
+  distinct(pert_iname, list_type) %>%
+  dplyr::count(pert_iname, name = "n_lists") %>%
+  mutate(identified_in_both_lists = n_lists == 2) %>%
+  dplyr::select(pert_iname, identified_in_both_lists)
+
+combined_summary <- combined_summary %>%
+  left_join(compound_overlap_flag, by = "pert_iname") %>%
+  mutate(
+    overlap_status = case_when(
+      identified_in_both_lists ~ "Both",
+      list_type == "Mimicker" ~ "Mimicker only",
+      list_type == "Opposer" ~ "Opposer only",
+      TRUE ~ NA_character_)) %>%
+  arrange(desc(identified_in_both_lists), pert_iname, list_type)
+
+mimicker_summary_2 <- combined_summary %>%
+  filter(list_type == "Mimicker") %>%
+  dplyr::rename(Type = list_type) %>%
+  arrange(desc(n_analyses_present), desc(median_of_median_NCS))
+
+opposer_summary_2 <- combined_summary %>%
+  filter(list_type == "Opposer") %>%
+  dplyr::rename(Type = list_type) %>%
+  arrange(desc(n_analyses_present), median_of_median_NCS)
+
+
+# WRITE TO EXCEL ---------------------------------------------------------------
+
+out_file <- "CMap Analysis Final/CMap Processed Results/Summaries/EDWK2_Overlap_Summary.xlsx"
+
+wb <- createWorkbook()
+
+addWorksheet(wb, "Mimicker_Summary")
+writeData(wb, "Mimicker_Summary", mimicker_summary_2)
+
+addWorksheet(wb, "Opposer_Summary")
+writeData(wb, "Opposer_Summary", opposer_summary_2)
+
+saveWorkbook(wb, out_file, overwrite = TRUE)
+```
+"#2A93B5", size = 4, fill = NA), 
+             plot.title = element_text(size = 12, color = "black", hjust = 0.5,
+                                       margin = margin(b = 2)))
+  }
+
+  # chronic group for this APNS
+  chronic_class <- chronic_class_for(apns)
+  chronic_key <- paste0(apns, "_", chronic_class)
+
+  if (chronic_key %in% names(all_plots)) {
+    bordered_plots[[paste0(chronic_key, "_border")]] <-
+      all_plots[[chronic_key]] +
+      theme(panel.border = element_rect(color = "#8D1946"
+
+

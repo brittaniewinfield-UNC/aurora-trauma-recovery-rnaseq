@@ -1,0 +1,20 @@
+# R / RStudio
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Quarto
+/.quarto/
+*_files/
+*_cache/
+
+# macOS
+.DS_Store
+
+# Never track data, even if someone points a path in here by accident
+/data/raw/
+/data/processed/
+*.csv
+*.rds
+*.RData

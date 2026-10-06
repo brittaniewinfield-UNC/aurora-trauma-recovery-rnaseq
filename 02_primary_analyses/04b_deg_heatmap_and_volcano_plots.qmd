@@ -1,0 +1,534 @@
+---
+title: "DEG Heatmap and Volcano Plots (Figure 2)"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+<!-- A grant-prep-only subsection ('Sarah grant 9-25', original lines 1963-2220, subsetting volcano plots to Pain + Moderate Recovery) was intentionally excluded here per author decision -- it is not part of the manuscript's reported analyses. -->
+
+<!-- ---- original lines 1644-1962 ---- -->
+
+# DEG HEATMAP
+Recovered-group differential expression results were used to identify genes with the strongest longitudinal shifts between ED and 6-month timepoints. For each gene, average log2 fold change and absolute log2 fold change were computed across recovered contrasts. Genes with uncharacterized identifiers (prefixes ENSG or LINC) were excluded. The top 15 genes with the most negative average log2 fold change (ED-up) and the top 15 with the most positive average log2 fold change (M6-up) were selected, and their union (30 genes) was carried forward.
+
+For these genes, log2 fold changes from the recovered-class contrasts were assembled into a Gene × APNS matrix and visualized as a horizontal heatmap, with genes on the x-axis (ED-up on the left, M6-up on the right) and APNS domains ordered from Pain at the top to Sleep at the bottom. Tiles are colored by log2 fold change using a centered purple–white–orange scale, with negative values indicating higher expression at ED and positive values indicating higher expression at M6. White tiles indicate domains where the gene did not pass filterByExpr and no logFC estimate was produced.
+
+```{r}
+DEG_all_APNS <- DEA_results_recovered %>%
+  filter(adj.P.Val < 0.01) %>%
+  distinct(Gene, APNS) %>%
+  dplyr::count(Gene, name = "n_apns_sig") %>%
+  filter(n_apns_sig == 10) %>%
+  pull(Gene)
+
+# top 15 genes upregulated at ED (remove uncharacterized genes/)
+top15_ED <- DEA_results_recovered %>%
+  filter(Gene %in% DEG_all_APNS) %>%
+  group_by(Gene) %>%
+  summarise(
+    Avg_logFC = mean(logFC, na.rm = TRUE),
+    Avg_abs_logFC   = mean(Abs_logFC, na.rm = TRUE),
+    Domains_sig = sum(adj.P.Val < 0.01, na.rm = TRUE),
+    .groups = "drop" ) %>%
+    # remove ENSG*, LINC*
+    filter(!grepl("^(ENSG|LINC)", Gene)) %>%   
+  arrange(Avg_logFC) %>%  # most negative first
+  slice_head(n = 15) %>%
+  pull(Gene)
+
+# top 15 genes upregulated at M6 (remove uncharacterized genes)
+top15_M6 <- DEA_results_recovered %>%
+  filter(Gene %in% DEG_all_APNS) %>%
+  group_by(Gene) %>%
+  summarise(
+    Avg_logFC = mean(logFC, na.rm = TRUE),
+    Avg_abs_logFC   = mean(Abs_logFC, na.rm = TRUE),
+    Avg_WeightedScore   = mean(Weighted_Score, na.rm = TRUE),
+    Domains_sig = sum(adj.P.Val < 0.01, na.rm = TRUE),
+    .groups = "drop" ) %>%
+    # remove ENSG*, LINC*
+    filter(!grepl("^(ENSG|LINC)", Gene)) %>%   
+  arrange(desc(Avg_logFC)) %>%  # most positive first
+  slice_head(n = 15) %>%
+  pull(Gene)
+
+
+# ED-high first, then M6-high (reversed)
+genes_top30 <- unique(c(top15_ED, rev(top15_M6)))
+
+
+DEG_plot <- DEA_results_recovered %>%
+  filter(Gene %in% genes_top30, APNS %in% APNS_ordered) %>%
+  distinct(Gene, APNS, .keep_all = TRUE) %>%
+  transmute(Gene, APNS,
+    logFC = as.numeric(logFC),
+    FDR = as.numeric(adj.P.Val)) %>%
+  mutate(neglogFDR = if_else(!is.na(FDR) & FDR > 0, -log10(FDR), NA_real_),
+    neglogFDR_cap = pmin(neglogFDR, 10))
+
+DEG_hm <- expand_grid(
+  Gene = factor(genes_top30, levels = genes_top30),
+  APNS = factor(APNS_ordered, levels = rev(APNS_ordered))) %>%
+  left_join(DEG_plot, by = c("Gene", "APNS")) %>%
+  mutate(Gene = factor(Gene, levels = genes_top30),
+         APNS = factor(APNS, levels = rev(APNS_ordered), labels = rev(APNS_labels)))
+
+lim <- max(abs(DEG_hm$logFC), na.rm = TRUE)
+
+DEG_heatmap <- ggplot(DEG_hm, aes(x = Gene, y = APNS)) +
+  geom_point(shape = 21, size = 3, fill = "white", color = "grey75", stroke = 0.35) +
+  
+  geom_point(aes(size = if_else(!is.na(FDR) & FDR <= 0.01, neglogFDR_cap, NA_real_),
+                 fill = if_else(!is.na(FDR) & FDR <= 0.01, logFC, NA_real_)),
+                 shape = 21, color = "grey20", stroke = 0.5, na.rm = TRUE) +
+  
+  scale_size_area(name = "-log10(FDR)", max_size = 10,
+                  limits = c(2, 10),
+                  breaks = c(2, 6, 10), 
+                  labels = c("2", "6", ">10")) +
+  
+  scale_fill_gradient2(
+  name = "log2FC\n(ED → 6M)",
+  low = "#006A98",     # higher at ED
+  mid = "white",
+  high = "#67B6B2",    # higher at 6M
+  midpoint = 0,
+  limits = c(-lim, lim),
+  na.value = "white",
+  breaks = c(-1, 0, 1),
+  labels = c("-1", "0", "1")
+) +
+  
+  guides(fill = guide_colorbar(title.position = "top",
+                               title.hjust = 0.5,
+                               barheight = unit(2.25, "cm"),
+                               barwidth = unit(0.6, "cm"),
+                               title.theme = element_text(
+                                 size = 11,
+                                 margin = margin(b = 8))),
+         size = guide_legend(order = 1)) +
+
+  labs(y = NULL, x = NULL, title = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_line(size = 0.5),
+    axis.text.x.top = element_text(angle = 45, hjust = 0, vjust = 0,
+                                   size = 11, color = "black",face = "italic", margin = margin(b=0)),
+    axis.ticks.x.top = element_line(color = "black", linewidth = 0.5),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title = element_text(size = 14, color = "black", face = "bold"),
+    
+    legend.margin = margin(t = -5, r = 0, b = 0, l = 0),
+    legend.title = element_text(hjust = 0.5, size = 11),
+    legend.text  = element_text(size = 11), 
+  
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
+
+  scale_x_discrete(limits = genes_top30, position = "top",
+                   expand = expansion(mult = c(.03, .03))) +
+
+  scale_y_discrete(expand = expansion(mult = c(.07, .07)), 
+                   labels = setNames(APNS_ordered, APNS_ordered))
+
+#ggsave(DEG_heatmap, filename = "Differential Expression Analyses/Plots/DEG Heatmap Recovered.jpg", width = 10, height = 4, dpi = 300)
+```
+
+
+# VOLCANOE PLOTS
+Volcano plots were generated for each APNS domain and latent class to visualize differential expression patterns. For each subset, log2 fold-change was plotted against –log10(FDR-adjusted p-value), with a dashed horizontal line indicating the FDR < 0.01 threshold. Points were colored according to latent class, with genes below the significance threshold shown in gray. The number of significant DEGs (FDR < 0.01) was computed per plot and added as the panel title. Latent classes identified as “Recovered” or “Chronic” for each domain were visually highlighted by adding a cyan or firebrick border, respectively. This framework enables direct comparison of transcriptional activity across latent classes within each APNS domain.
+
+## Function
+```{r}
+create_volcano_plot <- function(data, category_name, class_name,
+                                x_limits = c(-1.4, 1.4),
+                                pval_threshold = 0.01,
+                                deg_pval_cutoff = 0.01) {
+
+  # count DEGs
+  num_degs <- sum(data$adj.P.Val < deg_pval_cutoff, na.rm = TRUE)
+  title <- paste(num_degs, "DEGs")
+
+  ggplot(data, aes(x = logFC, y = -log10(adj.P.Val))) +
+    
+  geom_point(aes(color = ifelse(adj.P.Val < pval_threshold, Class, 
+  "Below Threshold")), size = 1.5, stroke = 0.5, shape = 19,  alpha = 0.4) +
+    
+    # add FDR threshold line
+    geom_hline(yintercept = -log10(pval_threshold),
+    color = "black", linewidth = 0.5, linetype = "dashed") +
+    
+    # axis and scale
+    scale_x_continuous(limits = x_limits, breaks = c(-1, 0, 1), expand = expansion(mult = 0)) +
+    
+    
+    # colors
+    scale_color_manual(
+      values = c("Low" = "#AAA8B3", 
+                                  "Moderate Recovery" = "cyan", 
+                                  "Moderate" = "#514D5B", 
+                                  "High" = "#0B090D", 
+                 "Below Threshold" = "#D7D9DF")) +
+
+    # theme
+    labs(title = title, x = NULL, y = NULL) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12,color = "transparent",
+                                hjust = 0.5,margin = margin(b = 2)),
+      axis.title = element_blank(),
+      axis.text = element_text(size = 12, color = "black"),
+      panel.border = element_rect(color = "black", size = 1, fill = NA), 
+      legend.position = "none", 
+      plot.margin = margin(t = 1, r = 3, b = 1, l = 3, unit = "pt"))
+}
+
+
+all_plots <- list()
+
+for (apns_name in APNS_ordered) {
+  for (class_name in class_order) {
+    class_data <- all_DEA_results %>%
+      filter(APNS == apns_name, Class == class_name)
+    
+    if (nrow(class_data) > 0) {
+      plot <- create_volcano_plot(class_data, apns_name, class_name)
+      all_plots[[paste(apns_name, class_name, sep = "_")]] <- plot
+    }
+  }
+}
+
+# store bordered plots here
+bordered_plots <- list()
+
+for (apns in APNS_ordered) {
+
+  # resolved group for this APNS
+  recovered_class <- recovered_class_for(apns)
+  recovered_key <- paste0(apns, "_", recovered_class)
+
+  if (recovered_key %in% names(all_plots)) {
+    bordered_plots[[paste0(recovered_key, "_border")]] <-
+      all_plots[[recovered_key]] +
+      theme(panel.border = element_rect(color = "#2A93B5", size = 4, fill = NA), 
+             plot.title = element_text(size = 12, color = "black", hjust = 0.5,
+                                       margin = margin(b = 2)))
+  }
+
+  # chronic group for this APNS
+  chronic_class <- chronic_class_for(apns)
+  chronic_key <- paste0(apns, "_", chronic_class)
+
+  if (chronic_key %in% names(all_plots)) {
+    bordered_plots[[paste0(chronic_key, "_border")]] <-
+      all_plots[[chronic_key]] +
+      theme(panel.border = element_rect(color = "#8D1946", size = 4, fill = NA), 
+            plot.title = element_text(size = 12, color = "black", hjust = 0.5,
+                                       margin = margin(b = 2)))
+  }
+}
+```
+
+
+## Apply
+Individual volcano plots were mapped back to their corresponding APNS domains and latent classes to enable downstream assembly of domain-specific figure panels. For each APNS outcome, the four latent-class plots (Low, Moderate Recovery, Moderate, High) were retrieved from the full plot list, and the bordered versions corresponding to the recovered and chronic classes were paired alongside them. This created a structured set of plot objects for each domain, preserving both the unmodified volcano plots and the border-annotated versions marking recovery (cyan3) and chronicity (firebrick4).
+```{r}
+pain_low <- all_plots[["Pain_Low"]]
+pain_modrec <- all_plots[["Pain_Moderate Recovery"]]
+pain_mod <- all_plots[["Pain_Moderate"]]
+pain_high <- all_plots[["Pain_High"]]
+
+# bordered
+pain_modrec_bord <- bordered_plots[["Pain_Moderate Recovery_border"]]
+pain_high_bord <- bordered_plots[["Pain_High_border"]]
+
+avoidance_low <- all_plots[["Avoidance_Low"]]
+avoidance_modrec <- all_plots[["Avoidance_Moderate Recovery"]]
+avoidance_mod <- all_plots[["Avoidance_Moderate"]]
+avoidance_high <- all_plots[["Avoidance_High"]]
+
+# bordered
+avoidance_modrec_bord <- bordered_plots[["Avoidance_Moderate Recovery_border"]]
+avoidance_high_bord <- bordered_plots[["Avoidance_High_border"]]
+
+reexperience_low <- all_plots[["Reexperience_Low"]]
+reexperience_modrec <- all_plots[["Reexperience_Moderate Recovery"]]
+reexperience_mod <- all_plots[["Reexperience_Moderate"]]
+reexperience_high <- all_plots[["Reexperience_High"]]
+
+# bordered
+reexperience_low_bord <- bordered_plots[["Reexperience_Low_border"]]
+reexperience_high_bord <- bordered_plots[["Reexperience_High_border"]]
+
+hyperarousal_low <- all_plots[["Hyperarousal_Low"]]
+hyperarousal_modrec <- all_plots[["Hyperarousal_Moderate Recovery"]]
+hyperarousal_mod <- all_plots[["Hyperarousal_Moderate"]]
+hyperarousal_high <- all_plots[["Hyperarousal_High"]]
+
+# bordered
+hyperarousal_low_bord <- bordered_plots[["Hyperarousal_Low_border"]]
+hyperarousal_high_bord <- bordered_plots[["Hyperarousal_High_border"]]
+
+mentalfatigue_low <- all_plots[["MentalFatigue_Low"]]
+mentalfatigue_modrec <- all_plots[["MentalFatigue_Moderate Recovery"]]
+mentalfatigue_mod <- all_plots[["MentalFatigue_Moderate"]]
+mentalfatigue_high <- all_plots[["MentalFatigue_High"]]
+
+# bordered
+mentalfatigue_low_bord <- bordered_plots[["MentalFatigue_Low_border"]]
+mentalfatigue_high_bord <- bordered_plots[["MentalFatigue_High_border"]]
+
+anxious_low <- all_plots[["Anxious_Low"]]
+anxious_modrec <- all_plots[["Anxious_Moderate Recovery"]]
+anxious_mod <- all_plots[["Anxious_Moderate"]]
+anxious_high <- all_plots[["Anxious_High"]]
+
+# bordered
+anxious_low_bord <- bordered_plots[["Anxious_Low_border"]]
+anxious_high_bord <- bordered_plots[["Anxious_High_border"]]
+
+somatic_low <- all_plots[["Somatic_Low"]]
+somatic_modrec <- all_plots[["Somatic_Moderate Recovery"]]
+somatic_mod <- all_plots[["Somatic_Moderate"]]
+somatic_high <- all_plots[["Somatic_High"]]
+
+# bordered
+somatic_low_bord <- bordered_plots[["Somatic_Low_border"]]
+somatic_high_bord <- bordered_plots[["Somatic_High_border"]]
+
+depression_low <- all_plots[["Depression_Low"]]
+depression_modrec <- all_plots[["Depression_Moderate Recovery"]]
+depression_mod <- all_plots[["Depression_Moderate"]]
+depression_high <- all_plots[["Depression_High"]]
+
+# bordered
+depression_low_bord <- bordered_plots[["Depression_Low_border"]]
+depression_high_bord <- bordered_plots[["Depression_High_border"]]
+
+nightmare_low <- all_plots[["Nightmare_Low"]]
+nightmare_modrec <- all_plots[["Nightmare_Moderate Recovery"]]
+nightmare_mod <- all_plots[["Nightmare_Moderate"]]
+nightmare_high <- all_plots[["Nightmare_High"]]
+
+# bordered
+nightmare_low_bord <- bordered_plots[["Nightmare_Low_border"]]
+nightmare_high_bord <- bordered_plots[["Nightmare_High_border"]]
+
+sleep_low <- all_plots[["Sleep_Low"]]
+sleep_modrec <- all_plots[["Sleep_Moderate Recovery"]]
+sleep_mod <- all_plots[["Sleep_Moderate"]]
+sleep_high <- all_plots[["Sleep_High"]]
+
+# bordered
+sleep_low_bord <- bordered_plots[["Sleep_Low_border"]]
+sleep_high_bord <- bordered_plots[["Sleep_High_border"]]
+```
+
+
+
+<!-- ---- original lines 2221-2406 ---- -->
+
+## Add trajectories to volcanoes 
+Trajectory–volcano panel assembly: Latent-class trajectory plots and volcano plots were combined into a unified 10×5 grid (one row per APNS domain). For each APNS, a list was constructed containing the domain’s trajectory plot followed by the four class-specific volcano plots (Low, Moderate Recovery, Moderate, High), with recovered and chronic classes marked by cyan and firebrick borders, respectively. Helper functions computed the maximum −log10(FDR) within each APNS row and applied a shared y-axis range and breaks across that row’s volcano plots to standardize vertical scaling. The resulting trajectory plus aligned volcano plots were concatenated row-wise in APNS order and arranged into a 5-column × 10-row layout, then exported as a high-resolution figure for downstream illustration.
+```{r}
+
+# vertical 
+apns_outcomes_traj_vol <- list(
+  Pain = list(line_pain, pain_low, pain_modrec_bord, pain_mod, pain_high_bord),
+  Avoidance = list(line_avoidance, avoidance_low, avoidance_modrec_bord, avoidance_mod, avoidance_high_bord),
+  Reexperience = list(line_reexperience, reexperience_low_bord, 
+                      reexperience_modrec, reexperience_mod, reexperience_high_bord),
+  Hyperarousal = list(line_hyperarousal, hyperarousal_low_bord, 
+                      hyperarousal_modrec, hyperarousal_mod, hyperarousal_high_bord),
+  Anxious = list(line_anxious, anxious_low_bord, anxious_modrec, anxious_mod, anxious_high_bord),
+  Dpression = list(line_depression, depression_low_bord, depression_modrec, depression_mod, depression_high_bord),
+  Somatic = list(line_somatic, somatic_low_bord, somatic_modrec, somatic_mod, somatic_high_bord),
+  MentalFatigue = list(line_mentalfatigue, mentalfatigue_low_bord, 
+                       mentalfatigue_modrec, mentalfatigue_mod, mentalfatigue_high_bord),
+  Nightmare = list(line_nightmare, nightmare_low_bord, nightmare_modrec, nightmare_mod, nightmare_high_bord),
+  Sleep = list(line_sleep, sleep_low_bord, sleep_modrec, sleep_mod, sleep_high_bord))
+
+#apns_outcomes_traj_vol <- apns_outcomes_traj_vol[APNS_ordered]
+
+
+
+# helpers for volcano y alignment (per APNS row) 
+get_max_volcano_y <- function(vol_list) {
+  max(sapply(vol_list, function(p) {
+    if (!is.null(p$data) && "adj.P.Val" %in% names(p$data)) {
+      max(-log10(p$data$adj.P.Val), na.rm = TRUE)
+    } else {
+      NA_real_
+    }
+  }), na.rm = TRUE)
+}
+
+align_volcano_y <- function(vol_list) {
+  max_y <- get_max_volcano_y(vol_list)
+  max_y <- max_y + 0.75
+  if (!is.finite(max_y)) max_y <- 2
+
+  upper <- ceiling(max_y)
+  if (upper %% 2L != 0L) upper <- upper + 1L
+  breaks <- c(0, round(upper/2), upper)
+
+  lapply(vol_list, function(p) {
+    if (!is.null(p$data) && "adj.P.Val" %in% names(p$data)) {
+      p + p + scale_y_continuous(
+  limits = c(0, upper),
+  breaks = breaks,
+  labels = function(x) {
+    ifelse(
+      x < 10,
+      paste0("\u2007", x),  # figure-space before single digits
+      as.character(x)
+    )
+  }
+)
+    } else {
+      p
+    }
+  })
+}
+
+align_volcano_y <- function(vol_list) {
+  
+  max_y <- get_max_volcano_y(vol_list)
+  max_y <- max_y + 0.75
+  
+  if (!is.finite(max_y)) max_y <- 2
+
+  upper <- ceiling(max_y)
+  if (upper %% 2L != 0L) upper <- upper + 1L
+
+  breaks <- c(0, round(upper / 2), upper)
+
+  # Only pad labels when the entire axis is single-digit
+  if (upper < 10) {
+    y_labels <- function(x) sprintf("%2.0f", x)
+  } else {
+    y_labels <- function(x) as.character(x)
+  }
+
+  lapply(vol_list, function(p) {
+    if (!is.null(p$data) && "adj.P.Val" %in% names(p$data)) {
+      
+      p + scale_y_continuous(
+        limits = c(0, upper),
+        breaks = breaks,
+        labels = y_labels
+      )
+      
+    } else {
+      p
+    }
+  })
+}
+
+# align volcanoes within each APNS row and flatten to 10×5 grid 
+rows_aligned <- lapply(apns_outcomes_traj_vol, function(plist) {
+  traj <- plist[[1]]
+  vols <- plist[2:5]
+  vols_aligned <- align_volcano_y(vols)
+  c(list(traj), vols_aligned)
+})
+
+# flatten row-by-row
+combined_plots <- unlist(rows_aligned, recursive = FALSE)
+
+# tighten margins a bit
+combined_plots <- lapply(
+  combined_plots,
+  function(p) p + theme(plot.margin = margin(t = 0, r = 1, b = 0, l = 1)))
+
+
+plot <- ggarrange(
+  plotlist = combined_plots,
+  ncol = 5,
+  nrow = 10,
+  align = "hv",
+  widths = c(1, 1, 1, 1, 1) 
+) 
+
+
+```
+
+
+## Figure 2
+```{r}
+blank_plot <- ggplot() + theme_void()
+combined_plots2 <- lapply(combined_plots, function(p) if (is.null(p)) blank_plot else p)
+
+
+
+row_grobs <- lapply(seq_len(10), function(i) {
+  
+  idx <- ((i - 1) * 5 + 1):((i - 1) * 5 + 5)
+
+  row_plot <- ggarrange(
+    plotlist = combined_plots2[idx],
+    ncol = 5,
+    nrow = 1,
+    align = "h",
+    widths = c(0.9, 1, 1, 1, 1)
+  ) +
+    theme(
+      plot.margin = margin(t = 10, r = 5, b = 0, l = 15)
+    )
+
+  
+ggdraw(row_plot) +
+  draw_label(
+    paste0(letters[i], ""),
+    x = 0.005,
+    y = 1,
+    hjust = 0,
+    vjust = 1.1,
+    fontface = "bold",
+    size = 20
+  ) +
+  draw_label(
+    APNS_labels[i],
+    x = 0.045,   # fixed starting position for every APNS title
+    y = 1,
+    hjust = 0,
+    vjust = 1.65,
+    fontface = "bold",
+    size = 13
+  )
+})
+
+
+
+
+
+
+
+
+
+plot <- ggarrange(plotlist = row_grobs, ncol = 1, nrow = 10, align = "hv",  heights = rep(1, 10))
+
+ggsave(plot, filename="Figures/v8 (new colors) - Figure 2 APNS Volcano Plot.jpg", width = 6.5, height = 12, units = "in", dpi = 600)
+
+```
+
+
+
+

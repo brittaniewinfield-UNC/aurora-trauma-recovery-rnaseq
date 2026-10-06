@@ -1,0 +1,319 @@
+---
+title: "Two-Week Subset: Pathway Analyses"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
+
+<!-- ---- original lines 564-857 ---- -->
+
+# PATHWAY ANALYSES
+```{r}
+
+# create ranked gene vector from DEA result
+make_ranked_genes <- function(dea_df) {
+    dea_df %>%
+        filter(!is.na(P.Value), !is.na(logFC), !is.na(Gene)) %>%
+        mutate(stat = (logFC) * -log10(P.Value)) %>%
+        arrange(desc(stat)) %>%
+        distinct(Gene, .keep_all = TRUE) %>%
+        dplyr::select(Gene, stat) %>%
+        deframe()
+}
+
+# pull MSigDB pathway collection
+get_msigdb_pathways <- function(category, subcategory) {
+    msigdbr(
+        species = "Homo sapiens",
+        category = category,
+        subcategory = subcategory) %>%
+        group_by(gs_name) %>%
+        summarise(genes = list(unique(gene_symbol)), .groups = "drop") %>%
+        deframe()
+}
+
+# run fgsea after intersecting pathways with ranked RNA-seq universe
+run_fgsea <- function(ranked_genes, pathways, rrs_group, interval,
+                      min_size, max_size, seed = 819) {
+    
+    pathways_use <- pathways %>%
+        map(intersect, names(ranked_genes)) %>%
+        keep(~ length(.x) >= min_size & length(.x) <= max_size)
+    
+    set.seed(seed)
+    
+    fgseaMultilevel(
+        pathways = pathways_use,
+        stats = ranked_genes,
+        minSize = min_size,
+        maxSize = max_size,
+        scoreType = "std") %>%
+        mutate(
+            RRS_Group = rrs_group,
+            Interval = interval,
+            n_pathway_genes = lengths(pathways_use[pathway]),
+            leadingEdge = map_chr(leadingEdge, paste, collapse = ";")) %>%
+        arrange(padj)
+}
+
+ranked_genes_EDWK2 <- make_ranked_genes(high_RRS_ED2WK)
+ranked_genes_ED6M  <- make_ranked_genes(high_RRS_ED6M)
+
+GO_BP_pathways <- get_msigdb_pathways(category = "C5", subcategory = "GO:BP")
+
+Reactome_pathways <- get_msigdb_pathways(
+    category = "C2",
+    subcategory = "CP:REACTOME"
+)
+
+fgsea_inputs <- tibble(
+    result_name = c("EDWK2_fgsea_gobp","EDM6_fgsea_gobp", "EDWK2_fgsea_reactome", "EDM6_fgsea_reactome"),
+    ranked_genes = list(ranked_genes_EDWK2, ranked_genes_ED6M, ranked_genes_EDWK2, ranked_genes_ED6M),
+    pathways = list( GO_BP_pathways, GO_BP_pathways, Reactome_pathways, Reactome_pathways),
+    RRS_Group = "High_RRS",
+    Interval = c("ED-to-WK2", "ED-to-6M", "ED-to-WK2", "ED-to-6M"),
+    Pathway_Database = c("GO:BP", "GO:BP", "Reactome", "Reactome"))
+
+fgsea_results <- fgsea_inputs %>%
+    mutate(
+        fgsea = pmap(
+            list(ranked_genes, pathways, RRS_Group, Interval),
+            ~ run_fgsea(
+                ranked_genes = ..1,
+                pathways = ..2,
+                rrs_group = ..3,
+                interval = ..4,
+                min_size = 50,
+                max_size = 500)))
+
+
+EDWK2_fgsea_gobp <- fgsea_results %>%
+    filter(result_name == "EDWK2_fgsea_gobp") %>%
+    pull(fgsea) %>%
+    pluck(1) %>%
+    filter(padj < 0.05) %>%
+  mutate(Weighted_Score = -log10(padj) * abs(NES)) %>%
+  arrange(desc(Weighted_Score))
+
+EDM6_fgsea_gobp <- fgsea_results %>%
+    filter(result_name == "EDM6_fgsea_gobp") %>%
+    pull(fgsea) %>%
+    pluck(1) %>%
+    filter(padj < 0.05) %>%
+  mutate(Weighted_Score = -log10(padj) * abs(NES)) %>%
+  arrange(desc(Weighted_Score))
+
+EDWK2_fgsea_reactome <- fgsea_results %>%
+    filter(result_name == "EDWK2_fgsea_reactome") %>%
+    pull(fgsea) %>%
+    pluck(1) %>%
+    filter(padj < 0.05) %>%
+  mutate(Weighted_Score = -log10(padj) * abs(NES)) %>%
+  arrange(desc(Weighted_Score))
+
+EDM6_fgsea_reactome <- fgsea_results %>%
+    filter(result_name == "EDM6_fgsea_reactome") %>%
+    pull(fgsea) %>%
+    pluck(1) %>%
+    filter(padj < 0.05) %>%
+  mutate(Weighted_Score = -log10(padj) * abs(NES)) %>%
+  arrange(desc(Weighted_Score))
+
+fgsea_combined <- fgsea_results %>%
+  filter(result_name %in% c(
+    "EDWK2_fgsea_gobp",
+    "EDM6_fgsea_gobp",
+    "EDWK2_fgsea_reactome",
+    "EDM6_fgsea_reactome"
+  )) %>%
+  transmute(
+    result_name,
+    fgsea
+  ) %>%
+  tidyr::unnest(fgsea) %>%
+  filter(padj < 0.05) %>%
+  mutate(
+    Interval = case_when(
+      str_detect(result_name, "^EDWK2") ~ "ED vs 2WK",
+      str_detect(result_name, "^EDM6") ~ "ED vs 6M"
+    ),
+    Database = case_when(
+      str_detect(result_name, "gobp$") ~ "GO-BP",
+      str_detect(result_name, "reactome$") ~ "Reactome"
+    ),
+   `Weighted Score` = -log10(padj) * abs(NES), 
+    `RRS Group` = "High RRS"
+  ) %>%
+  dplyr::select(Interval, Database, everything(), -c(result_name, RRS_Group)) %>%
+              
+  arrange(Interval, Database,  `RRS Group`, pval, padj, log2err, ES, NES, `Weighted Score`, size, leadingEdge) %>%
+  dplyr::rename(Pathway = pathway, 
+                `P Value` = pval, 
+                FDR = padj,
+                Log2Err = log2err, 
+                ES = ES, 
+                NES = NES, 
+                `Pathway Size` = size, 
+                `Leading Edge Genes` = leadingEdge)
+
+write.csv(fgsea_combined, "../AURORA Final RNA Project Materials/FINAL AURORA RESULTS/2WK Analyses/Pathway Analyses (in progress)/Combined FGSEA Analyses.csv")
+
+```
+
+## Export 
+```{r}
+library(openxlsx)
+library(dplyr)
+
+# Format fgsea results for export
+format_fgsea_export <- function(df) {
+  df %>%
+    dplyr::mutate(
+      Enrichment_Direction = dplyr::case_when(
+        Interval == "ED-to-WK2" & NES > 0 ~ "Enriched at WK2",
+        Interval == "ED-to-WK2" & NES < 0 ~ "Enriched at ED",
+        Interval == "ED-to-6M"  & NES > 0 ~ "Enriched at 6M",
+        Interval == "ED-to-6M"  & NES < 0 ~ "Enriched at ED",
+        TRUE ~ NA_character_)) %>%
+    dplyr::select(RRS_Group, Interval, Enrichment_Direction, pathway, pval, padj,
+                  log2err, ES, NES, size, leadingEdge) %>%
+    dplyr::arrange(padj, dplyr::desc(abs(NES)))
+}
+
+# Apply formatting
+EDWK2_fgsea_gobp_export <- format_fgsea_export(EDWK2_fgsea_gobp)
+EDM6_fgsea_gobp_export <- format_fgsea_export(EDM6_fgsea_gobp)
+
+EDWK2_fgsea_reactome_export <- format_fgsea_export(EDWK2_fgsea_reactome)
+EDM6_fgsea_reactome_export <- format_fgsea_export(EDM6_fgsea_reactome)
+
+# Create workbook
+wb <- openxlsx::createWorkbook()
+
+openxlsx::addWorksheet(wb, "GOBP ED-WK2")
+openxlsx::addWorksheet(wb, "GOBP ED-6M")
+openxlsx::addWorksheet(wb, "REACTOME ED-WK2")
+openxlsx::addWorksheet(wb, "REACTOME ED-6M")
+
+openxlsx::writeData(wb, "GOBP ED-WK2", EDWK2_fgsea_gobp_export)
+openxlsx::writeData(wb, "GOBP ED-6M", EDM6_fgsea_gobp_export)
+openxlsx::writeData(wb, "REACTOME ED-WK2", EDWK2_fgsea_reactome_export)
+openxlsx::writeData(wb, "REACTOME ED-6M", EDM6_fgsea_reactome_export)
+
+# Format sheets
+for(sheet in names(wb)) {
+  openxlsx::freezePane(wb, sheet = sheet, firstRow = TRUE)
+  openxlsx::addFilter(wb, sheet = sheet, rows = 1,
+                      cols = 1:ncol(openxlsx::readWorkbook(wb, sheet = sheet)))
+  openxlsx::setColWidths(wb, sheet = sheet, widths = "auto", 
+                         cols = 1:ncol(openxlsx::readWorkbook(wb, sheet = sheet)))
+}
+
+# Save workbook
+openxlsx::saveWorkbook(wb,
+  file = "../NATURE MEDICINE PAPER/FINAL AURORA RESULTS/2WK Analyses/Pathway Analyses/High RRS FGSEA GOBP and REACTOME 6-4.xlsx",
+  overwrite = TRUE)
+
+```
+
+## Figure 6c
+```{r}
+library(tidyverse)
+
+top10_gobp <- EDWK2_fgsea_gobp %>%
+  as_tibble() %>%
+  arrange(desc(Weighted_Score)) %>%
+ slice_head(n = 10) %>%
+  mutate(
+    pathway_clean = pathway %>%
+      str_remove("^GOBP_") %>%
+      str_replace_all("_", " ") %>%
+      str_to_sentence(),
+    pathway_clean = fct_reorder(pathway_clean, NES),
+    neg_log10_padj = -log10(padj)
+  )
+
+GOBP_figure6 <- ggplot(top10_gobp, aes(x = NES, y = pathway_clean, fill = neg_log10_padj)) +
+  geom_col(width = 0.75) +
+  scale_fill_gradient(
+    name = "-log10\n(FDR)",
+    low = "#FBE7A1",
+    high = "#E8C95A",
+    na.value = "white",
+    limits = c(2.8, 4.2),
+    breaks = c(3, 3.5, 4),
+    labels = c("3","3.5", "4")) +
+  scale_x_continuous(breaks = c(0, 1,2), labels = c("0", "1", "2")) +
+  labs(title = "Enriched GO BPs\nED \u2192 2WK\n", x = "NES ED \u2192 2WK\n + NES = enrichment at 2WK", y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 14, color = "black"),
+    legend.title = element_text(size = 14, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8), 
+
+        legend.position = "right")
+```
+
+
+## 2WK reactomes
+```{r}
+library(tidyverse)
+
+top_reactome <- EDWK2_fgsea_reactome %>%
+  as_tibble() %>%
+  arrange(desc(Weighted_Score)) %>%
+  #slice_head(n = ) %>%
+  mutate(
+    pathway_clean = pathway %>%
+      str_remove("^REACTOME_") %>%
+      str_replace_all("_", " ") %>%
+      str_to_sentence(),
+    pathway_clean = fct_reorder(pathway_clean, NES),
+    neg_log10_padj = -log10(padj))
+
+reactome_figure6 <- ggplot(top_reactome, aes(x = NES, y = pathway_clean, fill = neg_log10_padj)) +
+  geom_col(width = 0.75) +
+  geom_vline(xintercept = 0, linewidth = 0.4, color = "grey40") +
+  scale_fill_gradient(
+    name = "-log10\n(FDR)",
+    low = "lightgoldenrod3",
+    high = "khaki1",
+    na.value = "white"#,
+    #breaks = c(3.5, 4),
+    #labels = c("3.5", "4")
+  ) +
+  scale_x_continuous(breaks = c(-2,-1,0, 1,2), labels = c("-2","-1", "0", "1", "2")) +
+  labs(title = "Significant Reactomes", x = "NES ED \u2192 2WK\n + NES = enrichment at 2WK\n - NES = enrichement at ED", y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 14, color = "black"),
+    legend.title = element_text(size = 14, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.position = "bottom")
+```
+
+
+
+

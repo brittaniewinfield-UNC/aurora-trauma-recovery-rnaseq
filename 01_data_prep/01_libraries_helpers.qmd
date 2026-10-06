@@ -1,0 +1,56 @@
+---
+title: "Libraries and Helper Functions"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 1-31 ---- -->
+
+# BASICS 
+
+## Libraries 
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(skimr)
+library(flextable)
+library(tidyr)
+library(broom)
+library(dorothea)
+```
+
+## Helpers/Constants 
+```{r}
+format_num <- function(x) {
+  ifelse(
+    is.na(x), NA,
+    ifelse(abs(x) < 0.001 & x != 0,
+           formatC(x, format = "e", digits = 2),   # scientific for very small
+           formatC(x, format = "f", digits = 3)))}   # fixed 3 decimals otherwise
+
+
+APNS_ordered <- c("Pain","Avoidance","Reexperience","Hyperarousal",
+                  "Anxious","Somatic","MentalFatigue","Depression","Nightmare","Sleep")
+
+```
+
+
+

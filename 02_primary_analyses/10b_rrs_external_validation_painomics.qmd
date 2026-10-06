@@ -1,0 +1,442 @@
+---
+title: "RRS External Validation in PainOMICs Cohort (Figure 5)"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 5831-6247 ---- -->
+
+## EXTERNAL VALIDATION OF RRS
+
+### Metadata harmonization
+Validation cohort metadata were extracted from the GEO series matrix file and reformatted into a sample-level metadata table. GEO “characteristics” annotation fields were parsed to recover participant identifiers, demographic variables, pain outcome classifications, and longitudinal timepoint information. The resulting metadata structure provided harmonized GSM identifiers and paired longitudinal sample information for downstream RRS scoring analyses.
+```{r}
+library(data.table)
+
+# load GEO series matrix for the validation cohort as a data.table 
+meta <- fread("Validation Cohort/GSE177034_series_matrix.txt.gz", 
+              sep="\t", fill=TRUE, quote="")
+
+# keep only metadata rows (those starting with !)
+meta_only <- meta[grep("^!", meta$V1), ]
+
+# Ksubset to sample-level annoation rows (begings with !Sample_)
+sample_rows <- meta_only[grepl("^!Sample_", V1)]
+
+# ensure sample metadata keys are unique before transposing 
+sample_rows$V1 <- make.unique(sample_rows$V1, sep = "_")
+
+# extract row names and transpose
+row_ids <- sub("^!Sample_", "", sample_rows$V1)
+
+# transpose sample metadata so samples are rows and fields are columns 
+val_mat <- t(as.matrix(sample_rows[, -1, with = FALSE]))
+
+# convert to data.table and set columns names from metadata
+sample_meta <- as.data.table(val_mat)
+setnames(sample_meta, row_ids)
+
+
+# function: remove quotes and the "field: " prefix from a metadata string
+extract_value <- function(x) {
+  x <- gsub('"', '', x) 
+  sub("^[^:]+: ?", "", x)
+}
+
+# parse key sample-level fields from GEO "characteristics_ch1" columns
+meta_parsed <- sample_meta %>%
+  mutate(
+    individual = extract_value(characteristics_ch1),
+    Sex = extract_value(characteristics_ch1_1),
+    age = as.numeric(extract_value(characteristics_ch1_2)),
+    smoking = extract_value(characteristics_ch1_3),
+    paingroup = extract_value(characteristics_ch1_4),
+    timepoint = extract_value(characteristics_ch1_5)) %>%
+  dplyr::select(geo_accession, title, individual, paingroup, timepoint, age) 
+
+# clean up any leading/trailing quotes
+meta_parsed$geo_accession <- gsub('^"|"$', "", meta_parsed$geo_accession)
+meta_parsed$title  <- gsub('^"|"$', "", meta_parsed$title)
+
+# final clean metadata 
+validation_meta <- meta_parsed %>%
+  transmute(
+    GSM  = geo_accession,
+    SampleTitle  = title,
+    IndividualID = individual,
+    Timepoint = timepoint, # t0 / t1
+    Outcome = paingroup, # Persistent or Resolved
+    Age = age)
+```
+
+### Define external recovery phenotypes
+PainOMICs longitudinal pain severity data were used to define recovery and chronic outcome groups within the external cohort. Multiple threshold combinations based on baseline pain severity, follow-up pain severity, and longitudinal pain change were explored to assess cohort balance and recovery/chronic group distributions. Participants with high baseline pain and low follow-up pain were classified as “Recovered_extreme,” whereas participants with persistently high pain at follow-up were classified as “Chronic_extreme.” All remaining participants were classified as “Intermediate.”
+```{r}
+load("Validation Cohort/epid.R")
+# show all columns
+colnames( epid )
+# 
+# MEAN.daily.pain.intensity.t0
+# NOW.pain.intensity.t0
+# MEAN.daily.pain.intensity.t1NC
+# NOW.pain.intensity.t1NC
+
+epid_pain <- epid %>%
+  dplyr::rename(IndividualID = RNA.Samples.t0) %>%
+  dplyr::select(IndividualID, Gender,
+    mean_t0 = MEAN.daily.pain.intensity.t0,
+    mean_t1 = MEAN.daily.pain.intensity.t1NC,
+    now_t0 = NOW.pain.intensity.t0,
+    now_t1 = NOW.pain.intensity.t1NC) %>%
+  mutate(mean_change = mean_t1 - mean_t0,
+         now_change  = now_t1 - now_t0)
+
+validation_meta_pain <- validation_meta %>%
+  left_join(epid_pain, by = "IndividualID")
+
+external_pain <- validation_meta_pain %>%
+  dplyr::select(IndividualID, Gender, mean_t0, mean_t1, mean_change) %>%
+  distinct()
+
+summary(external_pain$mean_t0)
+summary(external_pain$mean_t1)
+summary(external_pain$mean_change)
+
+table(external_pain$mean_t0)
+table(external_pain$mean_t1)
+
+threshold_grid <- expand.grid(
+  t0_thresh = 6,
+  t1_low_thresh = 0:3,     # recovered threshold
+  t1_high_thresh = 6:8,    # chronic threshold
+  change_thresh = -6:-2)
+
+threshold_results <- threshold_grid %>%
+  rowwise() %>%
+  mutate(
+    recovered_flag = list(
+      external_pain$mean_t0 >= t0_thresh &
+      external_pain$mean_t1 <= t1_low_thresh &
+      external_pain$mean_change <= change_thresh),
+    chronic_flag = list(
+      external_pain$mean_t0 >= t0_thresh &
+      external_pain$mean_t1 >= t1_high_thresh &
+      external_pain$mean_change >= -1),
+    n_recovered = sum(unlist(recovered_flag)),
+    n_chronic = sum(unlist(chronic_flag)),
+    overlap = sum(unlist(recovered_flag) & unlist(chronic_flag)),
+    intermediates = nrow(external_pain) - (n_recovered + n_chronic - overlap)) %>%
+  ungroup() %>%
+  dplyr::select(-recovered_flag, -chronic_flag)
+
+
+external_pain <- external_pain %>%
+  mutate(External_Group = case_when(
+    mean_t0 >= 6 & mean_t1 <= 2 ~ "Recovered_extreme",
+    mean_t0 >= 6 & mean_t1 >= 6 ~ "Chronic_extreme",
+    TRUE ~ "Intermediate"))
+
+table(external_pain$External_Group)
+
+external_pain %>%
+  group_by(External_Group) %>%
+  summarise(
+    n = n(),
+    mean_t0 = mean(mean_t0),
+    mean_t1 = mean(mean_t1),
+    mean_change = mean(mean_change))
+```
+
+### External RNA-seq preprocessing
+Raw RNA-seq count data from the validation cohort were imported and converted from Entrez identifiers to HGNC gene symbols. Expression values were log2 transformed following pseudocount addition. Longitudinally paired participants with both baseline (t0) and follow-up (t1) RNA samples present in the expression matrix were retained for downstream analyses. Genes overlapping the locked RRS gene signature were identified and extracted for external scoring.
+```{r}
+# Locked weights from internal extreme-phenotype model
+beta_vec <- beta_vec_final
+stopifnot(!is.null(names(beta_vec)))
+stopifnot(anyDuplicated(names(beta_vec)) == 0)
+
+# Load raw count matrix
+validation_RNA_raw <- read.table("Validation Cohort/GSE177034_raw_counts_GRCh38.p13_NCBI.tsv",
+                                 header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+# Convert Entrez ID to HGNC symbol
+validation_RNA_raw$GeneSymbol <- mapIds(
+  org.Hs.eg.db,
+  keys = as.character(validation_RNA_raw$GeneID),
+  column = "SYMBOL",
+  keytype = "ENTREZID",
+  multiVals = "first")
+
+validation_RNA_log2 <- validation_RNA_raw %>%
+  relocate(GeneSymbol, .before = GeneID) %>%
+  dplyr::select(-GeneID) %>%
+  filter(!is.na(GeneSymbol), GeneSymbol != "")
+
+validation_RNA_log2[, -1] <- log2(validation_RNA_log2[, -1] + 1)
+
+dim(validation_RNA_log2) # 37692   196
+
+# RNA sample IDs present in expression matrix
+rna_samples <- setdiff(colnames(validation_RNA_log2), "GeneSymbol")
+
+# paired metadata with both timepoints represented in RNA
+meta_paired <- validation_meta %>%
+  mutate(in_expr = GSM %in% rna_samples) %>%
+  group_by(IndividualID) %>%
+  filter(
+    n() == 2,
+    all(in_expr),
+    all(c("t0", "t1") %in% Timepoint)) %>%
+  ungroup()
+
+nrow(meta_paired) #194
+length(unique(meta_paired$IndividualID)) #97
+
+valid_gsms <- meta_paired$GSM
+
+expr_paired <- validation_RNA_log2 %>%
+  dplyr::select(GeneSymbol, all_of(valid_gsms))
+
+(all(colnames(expr_paired)[-1] == meta_paired$GSM)) # true 
+
+genes_matched <- intersect(expr_paired$GeneSymbol, names(beta_vec))
+genes_missing <- setdiff(names(beta_vec), expr_paired$GeneSymbol)
+
+length(genes_matched) # 43
+length(genes_missing) # 3
+genes_missing  #"ENSG00000288887" "PKD1P5"  "RPL17.C18orf32" 
+```
+
+### External validation of the RRS
+The locked RRS beta vector derived from the AURORA extreme phenotype model was applied directly to the external PainOMICs cohort without retraining or coefficient modification. Participant-level longitudinal gene expression changes (t1 − t0) were calculated for overlapping RRS genes and multiplied by the corresponding locked beta coefficients to generate participant-level RRS values. RRS distributions were then compared across persistent versus resolved pain outcomes and across externally defined recovery phenotype groups.
+```{r}
+genes_matched <- final_stable_genes
+
+expr_scoring <- expr_paired %>%
+  filter(GeneSymbol %in% genes_matched)
+
+dim(expr_scoring)
+
+expr_long <- expr_scoring %>%
+  pivot_longer(cols = -GeneSymbol, names_to = "GSM", values_to = "expr") %>%
+  left_join(meta_paired, by = "GSM")
+
+expr_delta_long <- expr_long %>%
+  dplyr::select(GeneSymbol, IndividualID, Outcome, Timepoint, expr) %>%
+  pivot_wider(names_from = Timepoint, values_from = expr) %>%
+  filter(!is.na(t0), !is.na(t1)) %>%
+  mutate(delta = t1 - t0)
+
+expr_delta_long <- expr_delta_long %>%
+  left_join(tibble(GeneSymbol = names(beta_vec),
+                   beta = as.numeric(beta_vec)),
+            by = "GeneSymbol") %>%
+  filter(!is.na(beta))
+
+RRS_validation <- expr_delta_long %>%
+  mutate(weighted_delta = delta * beta) %>%
+  group_by(IndividualID, Outcome) %>%
+  summarise(RRS = sum(weighted_delta, na.rm = TRUE),
+            n_genes_used = n(),
+            .groups = "drop")
+
+RRS_validation <- RRS_validation %>%
+  mutate(Outcome = factor(Outcome, levels = c("Resolved", "Persistent")))
+
+RRS_validation %>%
+  group_by(Outcome) %>%
+  summarise(
+    n = n(),
+    mean_RRS = mean(RRS),
+    sd_RRS = sd(RRS),
+    mean_genes_used = mean(n_genes_used))
+
+t.test(RRS ~ Outcome, data = RRS_validation)
+# t = 2.1127, df = 85.42, p-value = 0.03754
+
+
+RRS_validation_extreme <- RRS_validation %>%
+  left_join(external_pain, by = "IndividualID")
+
+anova(lm(RRS ~ External_Group, data = RRS_validation_extreme))
+#               Df Sum Sq Mean Sq F value  Pr(>F)  
+# External_Group  2  2.344 1.17198  4.4013 0.01489 *
+
+pairwise.t.test(
+  RRS_validation_extreme$RRS,
+  RRS_validation_extreme$External_Group,
+  p.adjust.method = "holm")
+
+RRS_validation_extreme_only <- RRS_validation_extreme %>%
+  filter(External_Group %in% c("Recovered_extreme","Chronic_extreme")) %>%
+  mutate(External_Group = factor(External_Group, c("Recovered_extreme","Chronic_extreme")))
+
+table(RRS_validation_extreme_only$External_Group)
+
+t.test(RRS ~ External_Group, data = RRS_validation_extreme_only)
+# t = 2.4219, df = 47.857, p-value = 0.01928
+
+
+RRS_validation_comb <- RRS_validation %>%
+  mutate(Cohort = "PainOMICs (External)") %>%
+  dplyr::select(Cohort, IndividualID, Outcome, RRS) %>%
+  dplyr::rename(`Participant ID` = IndividualID) %>%
+  arrange(desc(RRS))
+
+RRS_full_cohort_comb <- RRS_full_cohort %>%
+  mutate(Cohort = "AURORA (Discovery)") %>%
+  dplyr::rename(`Participant ID` = PID, 
+                Outcome = Group) %>%
+  arrange(desc(RRS))
+
+RRS_combined_data <- rbind(RRS_full_cohort_comb, RRS_validation_comb) %>%
+  dplyr::select(Cohort, `Participant ID`, RRS, Outcome)
+
+
+#write.csv(RRS_combined_data, "RNA-based Recovery Score Final/AURORA and PainOMICs RRS Data.csv")
+```
+
+### Plot external RRS distributions
+RRS distributions in the external PainOMICs cohort were visualized using boxplots with overlaid individual participant values. The plot compares participants with resolved versus persistent pain outcomes following application of the locked AURORA-derived RRS. Statistical annotations indicate group-level differences in RRS distributions between outcome groups.
+```{r}
+# p-value for external cohort
+p_ext_label <- "p = 0.038"
+
+RRS_validation <- RRS_validation %>%
+  mutate(Outcome = factor(Outcome, levels = c("Resolved", "Persistent"),
+                           labels = c("Resolved\n(n = 48)", "Persistent\n(n = 49)")))
+
+# colors
+external_colors <- c("Resolved\n(n = 48)" = "#2698B1", "Persistent\n(n = 49)" = "#8D1946")
+
+# external cohort plot
+p_external <- RRS_validation %>%
+ggplot(aes(x = Outcome, y = RRS, fill = Outcome)) +
+  geom_boxplot(aes(fill = Outcome), width = 0.5, outlier.shape = NA,
+               linewidth = 0.5, show.legend = FALSE, color = "black", alpha = 0.8) +
+  geom_jitter(aes(color = Outcome), width = 0.12, size = 2, 
+              alpha = 0.7, show.legend = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2, 
+               fill = "black", color = "black") +
+  scale_fill_manual(values = external_colors) +
+  scale_color_manual(values = external_colors) +
+  annotate("text", x = 1.5, y = 1, label = p_ext_label, size = 5) +
+  labs(title = "External Test Cohort\n(PainOMICs)", x = NULL, y = "RRS") +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
+    axis.text.y = element_text(color = "black"),
+    axis.title.y = element_text(size = 16, margin = margin(r = -10), vjust = -0.4),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "none")
+
+p_external
+
+```
+
+
+## Figure 5 
+```{r}
+p_train_com <- p_train + 
+      theme(plot.margin = margin(t=0,b=0,l=20,r=0),
+        axis.title.y = element_text(vjust = -1))
+
+p_holdout_com <- p_holdout + 
+    theme(plot.margin = margin(t=0,b=0,l=20,r=2),
+        axis.title.y = element_text(vjust = -0.5))
+
+p_external_com <- p_external + 
+    theme(plot.margin = margin(t=0,b=0,l=20,r=2),
+        axis.title.y = element_text(vjust = 2))
+
+RRS_AUC_com <- RRS_AUC + 
+  theme(plot.margin = margin(t=3,b=0,l=20,r=2),
+        axis.title.x = element_text(vjust = 10), 
+        axis.title.y = element_text(vjust = -0.5))
+
+RRS_distributions_combined <- ggarrange(p_train_com, p_holdout_com, p_external_com, RRS_AUC_com,  nrow = 1, align = "h", widths = c(1.8, 2.75, 1.8, 3.5))
+ggsave(RRS_distributions_combined, filename = "Figures/Figure 5 RRS v6.jpg", width = 18, height = 4)
+```
+
+
+
+
+### Heatmap for monte carlo
+```{r}
+library(tidyverse)
+
+set.seed(123)
+
+# example sizes
+n_samples <- 10
+n_splits <- 10
+test_prop <- 0.2
+n_test <- round(n_samples * test_prop)
+
+# make split matrix
+split_df <- map_dfr(seq_len(n_splits), function(i) {
+  test_ids <- sort(sample(seq_len(n_samples), size = n_test, replace = FALSE))
+  
+  tibble(
+    Split = paste("Split", i),
+    Sample = seq_len(n_samples),
+    Set = if_else(Sample %in% test_ids, "Test (20%)", "Train (80%)")
+  )
+})
+
+split_df <- split_df %>%
+  mutate(
+    Split = factor(Split, levels = rev(unique(Split))),
+    Sample = factor(Sample, levels = seq_len(n_samples)),
+    Set = factor(Set, levels = c("Train (80%)", "Test (20%)"))
+  )
+
+split_heatmap <- ggplot(split_df, aes(x = Sample, y = Split, fill = Set)) +
+  geom_tile(color = "white", linewidth = 0.4) +
+  scale_fill_manual(
+    values = c("Train (80%)" = "seashell2", "Test (20%)" = "lightsalmon")
+  ) +
+  labs(
+    x = "Samples",
+    y = "Monte Carlo \nSplit (20)",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.position = "right",
+    legend.justification = "center", 
+    legend.text = element_text(margin = margin(l=0), size = 12),
+    legend.box.margin = margin(l = -5),
+    legend.margin = margin(l=-5))
+
+ggsave(split_heatmap, filename = "heatmap_monte_carlo.jpg", width =2.85, height = 1.65, dpi = 300)
+
+```
+
+
+
+

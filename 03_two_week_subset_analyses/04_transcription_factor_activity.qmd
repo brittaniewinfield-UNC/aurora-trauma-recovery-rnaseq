@@ -1,0 +1,509 @@
+---
+title: "Two-Week Subset: Transcription Factor Activity"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
+
+<!-- ---- original lines 858-1341 ---- -->
+
+# TRANSCRIPTION FACTOR ACTIVITY
+```{r}
+TF_analysis <- RRS_df_median_2wk %>%
+    dplyr::select(-X) %>%
+    left_join(TF_data_EDWK2M6, by = "PID") 
+
+# TF columns
+tf_cols <- TF_analysis %>%
+  dplyr::select(-PID, -RRS, -Group, -RRS_median_group, -Timepoint, -INVENTORY.CODE) %>%
+  names()
+
+# keep only Low/High RRS and needed timepoints
+TF_analysis_sub <- TF_analysis %>%
+  dplyr::filter(
+    RRS_median_group %in% c("Low_RRS", "High_RRS"))
+
+# long format
+TF_long <- TF_analysis_sub %>%
+  dplyr::select(PID, RRS_median_group, Timepoint, all_of(tf_cols)) %>%
+  pivot_longer(
+    cols = all_of(tf_cols),
+    names_to = "TF",
+    values_to = "TF_activity")
+
+# wide format so interval changes can be calculated
+TF_wide <- TF_long %>%
+  pivot_wider(
+    names_from = Timepoint,
+    values_from = TF_activity)
+
+```
+
+## Within class
+```{r}
+TF_interval_results <- purrr::map_dfr(
+  seq_len(nrow(intervals)),
+  function(i) {
+    comp  <- intervals$Comparison[i]
+    time1 <- intervals$time1[i]
+    time2 <- intervals$time2[i]
+
+    TF_wide %>%
+      dplyr::group_by(RRS_median_group, TF) %>%
+      group_modify(~ run_paired_interval_test(.x, time1, time2)) %>%
+      ungroup() %>%
+      mutate(
+        Comparison = comp,
+        .before = 1)}) %>%
+  dplyr::group_by(RRS_median_group, Comparison) %>%
+  mutate(FDR = p.adjust(`P Value`, method = "BH")) %>%
+  ungroup() %>%
+  mutate(RRS_median_group = factor(RRS_median_group, levels = c("High_RRS", "Low_RRS")))
+
+colnames(TF_interval_results)
+
+TF_interval_results <- TF_interval_results %>%
+  dplyr::select(Comparison, RRS_median_group, TF, FDR, `P Value`, `Avg Δ (WK2 − ED)`, `Avg Δ (M6 − WK2)`,`Avg Δ (M6 − ED)`, `T Stat`, `SE`, `95% CI`, `Avg ED`, `Avg WK2`, `Avg M6` ) %>%
+  dplyr::rename(`RRS Group` = RRS_median_group)
+
+# EXPORT ------------------------------------------------------------
+wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center")
+body_style   <- createStyle(halign = "center")
+
+add_sheet_with_data <- function(wb, sheet_name, data) {
+  addWorksheet(wb, sheet_name)
+  writeData(wb, sheet = sheet_name, data)
+
+  addStyle(wb, sheet = sheet_name, header_style,
+           rows = 1, cols = seq_len(ncol(data)), gridExpand = TRUE)
+
+  if(nrow(data) > 0) {
+    addStyle(wb, sheet = sheet_name, body_style,
+             rows = 2:(nrow(data) + 1), cols = seq_len(ncol(data)), gridExpand = TRUE)
+  }
+
+  setColWidths(wb, sheet = sheet_name, cols = seq_len(ncol(data)), widths = "auto")
+}
+
+sheet_order <- expand_grid(
+  `RRS Group` = c("High_RRS", "Low_RRS"),
+  Comparison = c("ED_vs_WK2", "WK2_vs_M6", "ED_vs_M6"))
+
+
+for(i in seq_len(nrow(sheet_order))) {
+
+  group_i <- sheet_order$`RRS Group`[i]
+  comp_i  <- sheet_order$Comparison[i]
+
+  sheet_data <- TF_interval_results %>%
+    filter(as.character(`RRS Group`) == group_i, Comparison == comp_i) %>%
+    arrange(`P Value`)
+  
+  sheet_name <- paste(group_i, comp_i, sep = "_")
+  add_sheet_with_data(wb, sheet_name, sheet_data)
+}
+
+saveWorkbook(wb, "2WK Analyses/TF Activity/Within Group Longitudinal Tests/EDWK2M6_TF_within_class_results.xlsx", overwrite = TRUE)
+
+
+TF_interval_results_export <- TF_interval_results %>%
+  dplyr::rename(Interval = Comparison) %>%
+    mutate(
+  Interval = case_when(
+    Interval == "ED_vs_WK2" ~ "ED vs WK2",
+    Interval == "WK2_vs_M6" ~ "WK2 vs 6M",
+    Interval == "ED_vs_M6" ~ "ED vs 6M",
+    TRUE ~ as.character(Interval)
+  ), 
+    `RRS Group` = case_when(
+    `RRS Group` == "High_RRS" ~ "High RRS",
+    `RRS Group` == "Low_RRS" ~ "Low RRS",
+    TRUE ~ as.character(`RRS Group`)
+  ),
+   Direction = case_when(
+      Interval == "ED vs WK2" & `Avg Δ (WK2 − ED)` > 0 ~ "Higher at WK2",
+      Interval == "ED vs WK2" & `Avg Δ (WK2 − ED)` < 0 ~ "Higher at ED",
+      Interval == "WK2 vs 6M" & `Avg Δ (M6 − WK2)` > 0 ~ "Higher at 6M",
+      Interval == "WK2 vs 6M" & `Avg Δ (M6 − WK2)` < 0 ~ "Higher at WK2",
+      Interval == "ED vs 6M" & `Avg Δ (M6 − ED)` > 0 ~ "Higher at 6M",
+      Interval == "ED vs 6M" & `Avg Δ (M6 − ED)` < 0 ~ "Higher at ED",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+    mutate(Interval = factor(Interval, levels = c("ED vs WK2", "WK2 vs 6M", "ED vs 6M"))) %>%
+
+  arrange(Interval, `RRS Group`, `P Value`)
+
+
+
+write.csv(TF_interval_results_export, "2WK Analyses/TF Activity/Within Group Longitudinal Tests/EDWK2M6_TF_within_results_class.csv")
+```
+
+### Overlap of Significant TFs
+```{r}
+
+TF_results_EDWK2 <- TF_interval_results %>%
+  filter(Comparison == "ED_vs_WK2") %>%
+  arrange(RRS_median_group, p.value, abs(mean_change))
+
+TF_results_WK2M6 <- TF_interval_results %>%
+  filter(Comparison == "WK2_vs_M6") %>%
+  arrange(RRS_median_group, p.value, abs(mean_change))
+
+TF_results_EDM6 <- TF_interval_results %>%
+  filter(Comparison == "ED_vs_M6") %>%
+  arrange(p.value, abs(mean_change))
+
+
+# significant TF names in each comparison
+sig_ED2WK <- TF_results_EDWK2 %>%
+  filter(FDR < 0.05) %>%
+  distinct(TF) %>%
+  pull(TF)
+
+sig_EDM6 <- TF_results_EDM6 %>%
+  filter(FDR < 0.05) %>%
+  distinct(TF) %>%
+  pull(TF)
+
+# TF sets
+TFs_ED2WK_only <- setdiff(sig_ED2WK, sig_EDM6)
+TFs_EDM6_only  <- setdiff(sig_EDM6, sig_ED2WK)
+TFs_shared  <- intersect(sig_ED2WK, sig_EDM6)
+
+# helper function to annotate one TF set with all stats from both comparisons
+make_annot_table <- function(tf_vec) {
+  
+  ed2wk_annot <- TF_results_EDWK2 %>%
+    filter(TF %in% tf_vec) %>%
+    dplyr::select(TF, RRS_median_group, n, mean_time1, mean_time2, mean_change, statistic, p.value, FDR) %>%
+    pivot_wider(names_from = RRS_median_group, 
+                values_from = c(n, mean_time1, mean_time2, mean_change, statistic, p.value, FDR)) %>%
+    rename_with(~ paste0("ED2WK_", .x), -TF)
+  
+  edm6_annot <- TF_results_EDM6 %>%
+    filter(TF %in% tf_vec) %>%
+    dplyr::select(TF, RRS_median_group, n, mean_time1, mean_time2, mean_change, statistic, p.value, FDR) %>%
+    pivot_wider(names_from = RRS_median_group,
+                values_from = c(n, mean_time1, mean_time2, mean_change, statistic, p.value, FDR)) %>%
+    rename_with(~ paste0("EDM6_", .x), -TF)
+  
+  full_join(ed2wk_annot, edm6_annot, by = "TF")
+}
+
+# annotated tables
+ED2WK_only_annot <- make_annot_table(TFs_ED2WK_only) %>%
+  dplyr::select(TF, ED2WK_mean_time1_High_RRS, ED2WK_mean_time1_Low_RRS, ED2WK_mean_time2_High_RRS, ED2WK_mean_time2_Low_RRS,
+         ED2WK_mean_change_High_RRS, ED2WK_mean_change_Low_RRS, ED2WK_p.value_High_RRS, ED2WK_p.value_Low_RRS,
+         ED2WK_FDR_High_RRS, ED2WK_FDR_Low_RRS) %>%
+  dplyr::rename(High_ED_Mean = ED2WK_mean_time1_High_RRS, 
+                Low_ED_Mean = ED2WK_mean_time1_Low_RRS, 
+                High_WK2_Mean = ED2WK_mean_time2_High_RRS, 
+                Low_WK2_Mean = ED2WK_mean_time2_Low_RRS, 
+                High_Change = ED2WK_mean_change_High_RRS, 
+                Low_Change = ED2WK_mean_change_Low_RRS, 
+                High_pvalue = ED2WK_p.value_High_RRS, 
+                Low_pvalue = ED2WK_p.value_Low_RRS, 
+                High_FDR = ED2WK_FDR_High_RRS, 
+                Low_FDR = ED2WK_FDR_Low_RRS) %>%
+  arrange(desc(abs(High_Change)))
+
+
+
+EDM6_only_annot <- make_annot_table(TFs_EDM6_only) %>%
+  dplyr::select(TF,EDM6_mean_time1_High_RRS, EDM6_mean_time1_Low_RRS, EDM6_mean_time2_High_RRS, 
+                EDM6_mean_time2_Low_RRS,EDM6_mean_change_High_RRS, EDM6_mean_change_Low_RRS,
+                EDM6_p.value_High_RRS, EDM6_p.value_Low_RRS, EDM6_FDR_High_RRS, EDM6_FDR_Low_RRS) %>%
+  dplyr::rename(
+    High_ED_Mean = EDM6_mean_time1_High_RRS,
+    Low_ED_Mean  = EDM6_mean_time1_Low_RRS,
+    High_M6_Mean = EDM6_mean_time2_High_RRS,
+    Low_M6_Mean = EDM6_mean_time2_Low_RRS,
+    High_Change = EDM6_mean_change_High_RRS,
+    Low_Change = EDM6_mean_change_Low_RRS,
+    High_pvalue = EDM6_p.value_High_RRS,
+    Low_pvalue = EDM6_p.value_Low_RRS,
+    High_FDR = EDM6_FDR_High_RRS,
+    Low_FDR = EDM6_FDR_Low_RRS) %>%
+  arrange(desc(abs(High_Change)))
+
+
+shared_annot <- make_annot_table(TFs_shared) %>%
+  dplyr::select(TF,
+    ED2WK_mean_time1_High_RRS, ED2WK_mean_time1_Low_RRS,
+    ED2WK_mean_time2_High_RRS, ED2WK_mean_time2_Low_RRS,
+    EDM6_mean_time2_High_RRS, EDM6_mean_time2_Low_RRS,
+    ED2WK_mean_change_High_RRS, ED2WK_mean_change_Low_RRS,
+    ED2WK_p.value_High_RRS, ED2WK_p.value_Low_RRS,
+    ED2WK_FDR_High_RRS, ED2WK_FDR_Low_RRS,
+    EDM6_mean_change_High_RRS, EDM6_mean_change_Low_RRS,
+    EDM6_p.value_High_RRS, EDM6_p.value_Low_RRS,
+    EDM6_FDR_High_RRS, EDM6_FDR_Low_RRS) %>%
+  dplyr::rename(
+    High_ED_Mean = ED2WK_mean_time1_High_RRS,
+    Low_ED_Mean = ED2WK_mean_time1_Low_RRS,
+    High_WK2_Mean = ED2WK_mean_time2_High_RRS,
+    Low_WK2_Mean = ED2WK_mean_time2_Low_RRS,
+    High_M6_Mean = EDM6_mean_time2_High_RRS,
+    Low_M6_Mean = EDM6_mean_time2_Low_RRS,
+    High_Change_ED2WK = ED2WK_mean_change_High_RRS,
+    Low_Change_ED2WK  = ED2WK_mean_change_Low_RRS,
+    High_pvalue_ED2WK = ED2WK_p.value_High_RRS,
+    Low_pvalue_ED2WK  = ED2WK_p.value_Low_RRS,
+    High_FDR_ED2WK = ED2WK_FDR_High_RRS,
+    Low_FDR_ED2WK = ED2WK_FDR_Low_RRS,
+    High_Change_EDM6 = EDM6_mean_change_High_RRS,
+    Low_Change_EDM6  = EDM6_mean_change_Low_RRS,
+    High_pvalue_EDM6 = EDM6_p.value_High_RRS,
+    Low_pvalue_EDM6  = EDM6_p.value_Low_RRS,
+    High_FDR_EDM6 = EDM6_FDR_High_RRS,
+    Low_FDR_EDM6 = EDM6_FDR_Low_RRS) %>%
+  arrange(desc(abs(High_Change_ED2WK)))
+
+# create ONE workbook
+wb <- createWorkbook()
+
+# add each table as a tab
+addWorksheet(wb, "ED2WK_only")
+writeData(wb, "ED2WK_only", ED2WK_only_annot)
+
+addWorksheet(wb, "EDM6_only")
+writeData(wb, "EDM6_only", EDM6_only_annot)
+
+addWorksheet(wb, "Shared")
+writeData(wb, "Shared", shared_annot)
+
+saveWorkbook(wb, "2WK Analyses/TF Activity/Within Group Longitudinal Tests/Significant_TF_overlap_across_intervals.xlsx", overwrite = TRUE)
+```
+
+## Between Class 
+```{r}
+TF_delta <- TF_wide %>%
+  mutate(
+    delta_ED_WK2 = WK2 - ED,
+    delta_WK2_M6 = M6 - WK2, 
+    delta_ED_M6 = M6 - ED)
+
+TF_delta_results <- purrr::map_dfr(
+  unique(TF_delta$TF),
+  function(tf) {
+
+    df_ct <- TF_delta %>% filter(TF == tf)
+
+    bind_rows(
+      run_delta_test(df_ct, "delta_ED_WK2") %>%
+        mutate(Comparison = "ED_vs_WK2"),
+      run_delta_test(df_ct, "delta_WK2_M6") %>%
+        mutate(Comparison = "WK2_vs_M6"), 
+      run_delta_test(df_ct, "delta_ED_M6") %>%
+        mutate(Comparison = "ED_vs_M6")) %>%
+      mutate(TF = tf, .before = 1)
+  }) %>%
+  group_by(Comparison) %>%
+  mutate(FDR = p.adjust(`P Value`, method = "BH")) %>%
+  ungroup()
+
+TF_between_class <- TF_delta_results %>%
+  arrange((FDR))
+
+
+TF_between_sheets <- list(
+  ED_vs_WK2 = TF_between_class %>%
+    filter(Comparison == "ED_vs_WK2") %>%
+    arrange(FDR),
+  WK2_vs_M6 = TF_between_class %>%
+    filter(Comparison == "WK2_vs_M6") %>%
+    arrange(FDR),
+  ED_vs_M6 = TF_between_class %>%
+    filter(Comparison == "ED_vs_M6") %>%
+    arrange(FDR))
+
+wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center")
+body_style   <- createStyle(halign = "center")
+
+add_sheet_with_data <- function(wb, sheet_name, data) {
+  addWorksheet(wb, sheet_name)
+  writeData(wb, sheet = sheet_name, data)
+
+  addStyle(wb, sheet = sheet_name, header_style,
+           rows = 1, cols = seq_len(ncol(data)), gridExpand = TRUE)
+
+  if(nrow(data) > 0) {
+    addStyle(wb, sheet = sheet_name, body_style,
+             rows = 2:(nrow(data) + 1), cols = seq_len(ncol(data)), gridExpand = TRUE)
+  }
+
+  setColWidths(wb, sheet = sheet_name, cols = seq_len(ncol(data)), widths = "auto")
+}
+
+purrr::iwalk(
+  TF_between_sheets,
+  ~ add_sheet_with_data(wb, sheet_name = .y, data = .x))
+
+saveWorkbook(wb, "2WK Analyses/TF Activity/Between Group Change Score Tests/EDWK2M6_TF_between_class_results.xlsx", overwrite = TRUE)
+
+```
+
+## Figure 6d
+```{r}
+selected_tfs <- c("TBX21","HIF1A","SPIB","IRF4","BACH1","MEF2C","MAF","CEBPA","MBD1","SPI1","NFKB1","RELA")
+selected_tfs <- c("SPI1","NFKB1","JUN","RELA","ATF3","ETS1","ESRRA","GATA2","KLF1","TBX21","MAF","TCF7")
+
+plot_df <- TF_analysis %>%
+  dplyr::filter(
+    RRS_median_group %in% c("Low_RRS", "High_RRS"),
+    Timepoint %in% c("ED", "WK2", "M6")) %>%
+  dplyr::select(PID, RRS_median_group, Timepoint, all_of(selected_tfs)) %>%
+  pivot_longer(
+    cols = all_of(selected_tfs),
+    names_to = "TF",
+    values_to = "TF_activity") %>%
+  mutate(
+    Timepoint = factor(Timepoint, levels = c("ED", "WK2", "M6")),
+    TF = factor(TF, levels = selected_tfs),
+    RRS_median_group = factor(
+      RRS_median_group,
+      levels = c("Low_RRS", "High_RRS"),
+      labels = c("Low RRS", "High RRS"))) %>%
+  group_by(RRS_median_group, Timepoint, TF) %>%
+  summarise(
+    mean_TF_activity = mean(TF_activity, na.rm = TRUE),
+    se = sd(TF_activity, na.rm = TRUE) / sqrt(sum(!is.na(TF_activity))),
+    .groups = "drop")
+
+tf_plot <- ggplot(
+  plot_df,
+  aes(x = Timepoint, y = mean_TF_activity, group = RRS_median_group, color = RRS_median_group)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3.2) +
+  geom_errorbar(aes(ymin = mean_TF_activity - se, ymax = mean_TF_activity + se), width = 0.08, linewidth = 0.7) +
+  facet_wrap(~ TF, scales = "free_y", ncol = 6) +
+  labs(x = NULL, y = "VIPER-inferred TF Activity", color = NULL) +
+  scale_y_continuous(
+    breaks = function(x) {
+      r <- range(x, na.rm = TRUE)
+      seq(r[1] + 0.06 * diff(r), r[2] - 0.06 * diff(r), length.out = 3)
+    },
+    labels = function(x) sprintf("%.2f", x)) +
+  scale_color_manual(values = c("Low RRS" = "firebrick4", "High RRS" = "cyan3")) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
+    axis.text.x = element_text(color = "black", size = 14),
+    axis.title = element_text(color = "black", size = 16),
+    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    legend.key.width = unit(1.5, "lines"),
+    panel.spacing.y = unit(0.3, "lines"),
+    axis.ticks.length = unit(0, "pt"), 
+      legend.margin = margin(t = -8),
+  legend.box.margin = margin(t = -8),
+  plot.margin = margin(t=15, b = 15))+
+  guides(color = guide_legend(override.aes = list(linewidth = 1.8, size = 5)))
+
+tf_plot
+```
+
+## Figure 6d v2 
+```{r}
+selected_tfs <- c("TBX21","HIF1A","SPIB","IRF4","BACH1","MEF2C",
+                  "MAF","CEBPA","MBD1","SPI1","NFKB1","RELA")
+
+selected_tfs <- c("SPI1","NFKB1","JUN","FOS","ETS1","ESRRA","GATA2","KLF1","TBX21","MAF","TCF7", "IRF4")
+
+
+plot_df <- TF_analysis %>%
+  dplyr::filter(
+    RRS_median_group %in% c("Low_RRS", "High_RRS"),
+    Timepoint %in% c("ED", "WK2", "M6")) %>%
+  dplyr::select(PID, RRS_median_group, Timepoint, all_of(selected_tfs)) %>%
+  pivot_longer(
+    cols = all_of(selected_tfs),
+    names_to = "TF",
+    values_to = "TF_activity") %>%
+  mutate(
+    Timepoint = factor(Timepoint, levels = c("ED", "WK2", "M6")),
+    time_days = case_when(
+      Timepoint == "ED" ~ 25,
+      Timepoint == "WK2" ~ 50,
+      Timepoint == "M6" ~ 160
+    ),
+    TF = factor(TF, levels = selected_tfs),
+    RRS_median_group = factor(
+      RRS_median_group,
+      levels = c("Low_RRS", "High_RRS"),
+      labels = c("Low RRS", "High RRS"))) %>%
+  group_by(RRS_median_group, Timepoint, time_days, TF) %>%
+  summarise(
+    mean_TF_activity = mean(TF_activity, na.rm = TRUE),
+    se = sd(TF_activity, na.rm = TRUE) / sqrt(sum(!is.na(TF_activity))),
+    .groups = "drop")
+
+tf_plot <- ggplot(
+  plot_df,
+  aes(x = time_days, y = mean_TF_activity, 
+      group = RRS_median_group, color = RRS_median_group)) +
+  geom_line(linewidth = 2) +
+  geom_point(size = 3.2) +
+  geom_errorbar(aes(ymin = mean_TF_activity - se, ymax = mean_TF_activity + se), 
+                width = 4, linewidth = 0.7) +
+  facet_wrap(~ TF, scales = "free_y", ncol = 6) +
+  scale_x_continuous(
+    limits = c(0,180),
+    breaks = c(25, 50, 160),
+    labels = c("", "", ""),
+    expand = expansion(mult = c(0.04, 0.04))
+  ) +
+  labs(x = NULL, y = "VIPER-inferred TF Activity", color = NULL) +
+  scale_y_continuous(
+    breaks = function(x) {
+      r <- range(x, na.rm = TRUE)
+      seq(r[1] + 0.06 * diff(r), r[2] - 0.06 * diff(r), length.out = 3)
+    },
+    labels = function(x) sprintf("%.2f", x)) +
+  scale_color_manual(values = c("Low RRS" = "#8D1946", "High RRS" = "#2A93B5")) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
+    axis.text.x = element_text(color = "black", size = 14),
+    axis.title = element_text(color = "black", size = 16),
+    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
+    legend.position = "none",
+    legend.text = element_text(size = 14),
+    legend.key.width = unit(1.5, "lines"),
+    panel.spacing.y = unit(1, "lines"),
+    axis.ticks.length = unit(0, "pt"), 
+    legend.margin = margin(t = -8),
+    legend.box.margin = margin(t = -8),
+    plot.margin = margin(t = 15, b = 15)
+  ) 
+```
+
+
+

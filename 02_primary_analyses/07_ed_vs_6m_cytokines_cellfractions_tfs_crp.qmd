@@ -1,0 +1,1167 @@
+---
+title: "Within-Timepoint (ED vs 6M) Analyses: Cytokines, Cell Fractions, Transcription Factors, CRP"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 3085-4226 ---- -->
+
+# ED vs 6M ANALYSES 
+```{r}
+run_within_class_EDvsM6_tests <- function(data_long,
+                                         metadata,
+                                         apns_ordered,
+                                         feature_cols,
+                                         feature_name = "Feature",
+                                         recovered_class_for,
+                                         chronic_class_for,
+                                         timepoints = c("ED", "M6"),
+                                         fdr_method = "fdr",
+                                         ci_digits = 3,
+                                         format_for_export = FALSE,
+                                         format_num_fun = format_num) {
+
+  # helper: run one APNS×Class
+  run_one <- function(apns, class_label, group_label) {
+
+    df <- data_long %>%
+      left_join(metadata, by = c("PID", "Timepoint")) %>%
+      filter(Timepoint %in% timepoints) %>%
+      filter(.data[[apns]] == class_label)
+
+    pairs <- df %>%
+      dplyr::select(PID, Timepoint, all_of(feature_cols)) %>%
+      pivot_longer(cols = all_of(feature_cols),
+                   names_to = feature_name,
+                   values_to = "Value") %>%
+      tidyr::pivot_wider(
+        id_cols = c(PID, !!rlang::sym(feature_name)),
+        names_from = Timepoint,
+        values_from = Value
+      ) %>%
+      filter(!is.na(.data[[timepoints[1]]]) & !is.na(.data[[timepoints[2]]])) %>%
+      mutate(
+        ED = as.numeric(.data[[timepoints[1]]]),
+        M6 = as.numeric(.data[[timepoints[2]]]),
+        Change = M6 - ED
+      )
+
+    # paired t-test on Change vs 0
+    out <- pairs %>%
+      group_by(.data[[feature_name]]) %>%
+      summarise(
+        TotalPairs = n(),
+        Mean_ED = mean(ED, na.rm = TRUE),
+        Mean_M6 = mean(M6, na.rm = TRUE),
+        MeanChange = mean(Change, na.rm = TRUE),
+        SD = sd(Change, na.rm = TRUE),
+        SE = SD / sqrt(TotalPairs),
+        test = list(stats::t.test(Change, mu = 0)),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        p_value = purrr::map_dbl(test, ~ unname(.x$p.value)),
+        t_stat  = purrr::map_dbl(test, ~ unname(.x$statistic)),
+        CI_lower = purrr::map_dbl(test, ~ .x$conf.int[1]),
+        CI_upper = purrr::map_dbl(test, ~ .x$conf.int[2]),
+
+        Direction = case_when(
+          MeanChange > 0 ~ "Higher at 6M",
+          MeanChange < 0 ~ "Higher at ED",
+          TRUE ~ "No Change"
+        ),
+
+        `Confidence Interval` = paste0(
+          "[",
+          formatC(CI_lower, format = "f", digits = ci_digits),
+          ", ",
+          formatC(CI_upper, format = "f", digits = ci_digits),
+          "]"
+        ),
+
+        APNS = apns,
+        Class = class_label,
+        Group = group_label
+      ) %>%
+      dplyr::select(-test)
+
+    out
+  }
+
+  # run across APNS for Recovered + Chronic
+  results <- purrr::map_dfr(apns_ordered, function(apns) {
+
+    rec <- run_one(apns, recovered_class_for(apns), "Recovered")
+    chr <- run_one(apns, chronic_class_for(apns), "Chronic")
+
+    bind_rows(rec, chr)
+  })
+
+  # FDR correction within APNS × Group strata
+  results <- results %>%
+    group_by(APNS, Group) %>%
+    mutate(FDR = p.adjust(p_value, method = fdr_method)) %>%
+    ungroup() %>%
+    arrange(APNS, Group, FDR, p_value)
+
+  # export-friendly table (labels concise, no underscores)
+  export_tbl <- results %>%
+    transmute(
+      Group,
+      !!feature_name := .data[[feature_name]],
+      `Avg Δ (6M − ED)` = MeanChange,
+      `Direction over time` = Direction,
+      `P value` = p_value,
+      `FDR` = FDR,
+      `T stat` = t_stat,
+      `Confidence interval` = `Confidence Interval`,
+      `Avg ED` = Mean_ED,
+      `Avg 6M` = Mean_M6,
+      `SD of Δ` = SD,
+      `SE of Δ` = SE,
+      `Total pairs` = TotalPairs, 
+      APNS,
+      Class
+    ) %>%
+    mutate(APNS = factor(APNS, levels = apns_ordered), 
+           Group = factor(Group, levels = c("Recovered", "Chronic"))) %>%
+    arrange(APNS, Group, FDR, `P value`)
+
+  if (isTRUE(format_for_export)) {
+    export_tbl <- export_tbl %>%
+      mutate(across(where(is.numeric), format_num_fun))
+  }
+
+  list(
+    ttest_results = results,
+    export_table = export_tbl
+  )
+}
+
+```
+
+## CYTOKINES
+```{r}
+cytokine_data <- cytokine_data %>%
+  mutate(PID = as.character(PID)) 
+
+cytokines <- c("IFN_gama", "IL_10", "IL_6", "IL_8", "TNF_alpha")
+
+cytokines_within_class_EDvsM6 <- run_within_class_EDvsM6_tests(
+  data_long = cytokine_data,
+  metadata = metadata_RNA_paired,
+  apns_ordered = APNS_ordered,
+  feature_cols = cytokines,
+  feature_name = "Cytokine",
+  recovered_class_for = recovered_class_for,
+  chronic_class_for = chronic_class_for,
+  format_for_export = TRUE)
+
+cytokines_within_class_EDvsM6_export  <- cytokines_within_class_EDvsM6$export_table %>%
+  dplyr::select(APNS, Group, Class, Cytokine, `Avg Δ (6M − ED)`,`T stat` , `SE of Δ`, `Confidence interval`, `P value`, FDR,`Direction over time`, `Avg ED`, `Avg 6M`  )
+
+cytokines_within_class_EDvsM6_export <- cytokines_within_class_EDvsM6_export %>%
+  dplyr::rename(
+    `Recovery Group` = Group,
+    `Cytokine` = Cytokine,
+    `Direction Over Time`  = `Direction over time`,
+    `Avg Δ (6M − ED)` = `Avg Δ (6M − ED)`,
+    `P Value` = `P value`,
+    `FDR` = FDR,
+    `T Stat` = `T stat`,
+    `Avg ED` = `Avg ED`,
+    `Avg 6M` = `Avg 6M`,
+    `95% CI` = `Confidence interval`,
+    `SE of Δ` = `SE of Δ`,
+    `APNS` = APNS,
+    `Class` = Class)
+
+#write.csv(cytokines_within_class_EDvsM6_export, "Cytokines Analysis/ED vs 6M/Summaries/Combined_Cytokines_Analysis.csv")
+
+```
+
+### Export
+```{r}
+
+cytokines_within_class_EDvsM6_export %>%
+  dplyr::group_split(APNS, `Recovery Group`, .keep = TRUE) %>%
+  purrr::walk(function(df) {
+
+    apns_name <- unique(df$APNS)
+    grp_name  <- unique(df$`Recovery Group`)
+
+    out_path <- file.path(
+      "Cytokines Analysis/ED vs 6M/Results per APNS",
+      paste0("Cytokines_ED_vs_6M_", apns_name, "_", grp_name, ".csv")
+    )
+
+    df %>%
+      dplyr::arrange(`P Value`) %>%   
+      readr::write_excel_csv(out_path)
+  })
+
+
+
+wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_style   <- createStyle(halign = "center", valign = "center")
+
+make_sheet_name <- function(apns, grp, existing) {
+  grp_code <- case_when(
+    grp == "Recovered" ~ "R",
+    grp == "Chronic"   ~ "C",
+    TRUE ~ as.character(grp)
+  )
+
+  nm <- substr(paste0(apns, " - ", grp_code), 1, 31)
+
+  if (nm %in% existing) {
+    i <- 2
+    repeat {
+      nm2 <- substr(paste0(nm, "_", i), 1, 31)
+      if (!(nm2 %in% existing)) return(nm2)
+      i <- i + 1
+    }
+  }
+  nm
+}
+
+existing_sheets <- character(0)
+
+for (apns in levels(cytokines_within_class_EDvsM6_export$APNS)) {
+
+  for (grp in levels(cytokines_within_class_EDvsM6_export$`Recovery Group`)) {
+
+    df_sub <- cytokines_within_class_EDvsM6_export %>%
+      filter(APNS == apns, `Recovery Group` == grp) %>%
+      arrange(as.numeric(`FDR`), as.numeric(`P Value`)) 
+
+    if (nrow(df_sub) == 0) next
+
+    sheet_name <- make_sheet_name(apns, grp, existing_sheets)
+    existing_sheets <- c(existing_sheets, sheet_name)
+
+    addWorksheet(wb, sheet_name)
+
+    writeData(wb, sheet = sheet_name, x = df_sub)
+
+    addStyle(wb, sheet_name, header_style,
+             rows = 1, cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+    if (nrow(df_sub) > 0) {
+      addStyle(wb, sheet_name, body_style,
+               rows = 2:(nrow(df_sub) + 1),
+               cols = 1:ncol(df_sub), gridExpand = TRUE)
+    }
+
+    setColWidths(wb, sheet_name, cols = 1:ncol(df_sub), widths = "auto")
+  }
+}
+
+saveWorkbook(wb, "Cytokines Analysis/ED vs 6M/Summaries/All_APNS_Cytokines_ED_vs_6M.xlsx", overwrite = TRUE)
+
+```
+
+### Summary 
+```{r}
+
+cytokines <- cytokines_within_class_EDvsM6_export %>%
+  mutate(`P Value` = as.numeric(`P Value`)) %>%
+  group_by(Cytokine) %>%
+  summarise(
+    min_p = min(`P Value`, na.rm = TRUE),
+    .groups = "drop") %>%
+  arrange(min_p) %>%
+  pull(Cytokine)
+
+apns_string <- function(apns) {
+  if (length(apns) == 0) return("")
+  paste0(apns, collapse = "; ")
+}
+
+table_cytokines_apns_summary <- cytokines_within_class_EDvsM6_export %>%
+  mutate(across(c(`Avg Δ (6M − ED)`, `P Value`, `FDR`, `T Stat`,
+                  `Avg ED`, `Avg 6M`, `SD of Δ`, `SE of Δ`), as.numeric)) %>%
+  mutate(is_sig = !is.na(FDR) & FDR < 0.01) %>%
+  group_by(Cytokine, `Recovery Group`) %>%
+  summarise(
+    `APNS Avg Δ (6M − ED)` = mean(`Avg Δ (6M − ED)`, na.rm = TRUE),
+    `APNS SE` = sd(`Avg Δ (6M − ED)`, na.rm = TRUE) / sqrt(sum(!is.na(`Avg Δ (6M − ED)`))),
+    `APNS Avg P Value` = mean(`P Value`, na.rm = TRUE),
+    `APNS Avg FDR` = mean(`FDR`, na.rm = TRUE),
+    `APNS Avg T Stat` = mean(`T Stat`, na.rm = TRUE),
+    `APNS Avg ED` = mean(`Avg ED`, na.rm = TRUE),
+    `APNS Avg 6M` = mean(`Avg 6M`, na.rm = TRUE),
+    `APNS Avg SD of Δ` = mean(`SD of Δ`, na.rm = TRUE),
+    `APNS Avg SE of Δ` = mean(`SE of Δ`, na.rm = TRUE),
+
+    `Count of Significant APNS Tests` = sum(is_sig, na.rm = TRUE),
+
+    `Significant APNS (ED vs 6M T-tests, FDR < 0.01)` = {
+      apns_sig <- APNS[is_sig]
+      apns_string(apns_sig)},
+    .groups = "drop") %>%
+  mutate(Cytokine = factor(Cytokine, levels = cytokines)) %>%
+  arrange(Cytokine) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+
+# export  ----------------------------------------------
+
+wb <- createWorkbook()
+addWorksheet(wb, "APNS Summary")
+
+writeData(
+  wb,
+  sheet = "APNS Summary",
+  x = table_cytokines_apns_summary,
+  withFilter = FALSE
+)
+
+# styling
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_style   <- createStyle(halign = "center", valign = "center")
+
+addStyle(wb, "APNS Summary", header_style,
+         rows = 1, cols = 1:ncol(table_cytokines_apns_summary), gridExpand = TRUE)
+
+addStyle(wb, "APNS Summary", body_style,
+         rows = 2:(nrow(table_cytokines_apns_summary) + 1),
+         cols = 1:ncol(table_cytokines_apns_summary), gridExpand = TRUE)
+
+setColWidths(wb, "APNS Summary", cols = 1:ncol(table_cytokines_apns_summary), widths = "auto")
+
+saveWorkbook(wb, "Cytokines Analysis/ED vs 6M/Summaries/Cytokine_APNS_Summary_ED_vs_6M.xlsx", overwrite = TRUE)
+
+```
+
+### Heatmap 
+```{r}
+hm_il6_recovered <- cytokines_within_class_EDvsM6_export %>%
+  filter(`Recovery Group` == "Recovered", Cytokine == "IL_6") %>%
+  mutate(FDR = as.numeric(FDR),
+         delta = as.numeric(`Avg Δ (6M − ED)`),
+         APNS = factor(APNS, levels = rev(APNS_ordered)),
+         y_pos = "Interleukin 6",
+         neglogFDR = if_else(!is.na(FDR) & FDR > 0, -log10(FDR), NA_real_),
+         neglogFDR_cap = pmin(neglogFDR, 10)) %>%
+  mutate(APNS = factor(APNS, levels = rev(APNS_ordered), labels = rev(APNS_labels)))
+
+range(hm_il6_recovered$`Avg Δ (6M − ED)`)
+
+IL6_heatmap <- ggplot(hm_il6_recovered, aes(x = y_pos, y = APNS)) +
+  geom_point(aes(size = neglogFDR_cap, fill = delta),
+             shape = 21, color = "grey20", stroke = 0.4, na.rm = TRUE) +
+  scale_size_area(name = "-log10(FDR)", max_size = 10,
+                  limits = c(2, 10),
+                  breaks = c(2, 6, 10), 
+                  labels = c("2", "6", ">10")) +
+  
+  scale_fill_gradient2(
+    name = "Δ IL6\n(ED \u2192 6M)",
+    low = "#006A98", high = "white",
+    limits = c(-0.8, 0.1), breaks = c(-0.8, -0.4, 0),
+    labels = c("-0.8", "-0.4", "0"), na.value = "white") +
+  
+  guides(fill = guide_colorbar(title.position = "top", 
+                               title.hjust = 0.5,
+                               barheight = unit(2.25, "cm"),
+                               barwidth = unit(0.6, "cm"),
+                               title.theme = element_text(size = 11, margin = margin(b = 8))),
+         size = guide_legend(order = 1)) +
+  theme_minimal(base_size = 11) +
+    labs(y = NULL, x= NULL, title = NULL) + 
+  theme(
+    panel.grid = element_line(size = 0.5),
+
+    axis.text.x.top = element_text(angle = 35, hjust = 0, vjust = 0, size = 12, color = "black", margin = margin(b = 0)),
+    axis.ticks.x.top = element_line(color = "black", linewidth = 0.5),
+
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title = element_text(size = 14, color = "black", face = "bold"),
+    
+    legend.margin = margin(t = -5, r = 0, b = 0, l = 0),
+    legend.title = element_text(hjust = 0.5, size = 11),
+    legend.text  = element_text(size = 11), 
+    
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
+
+  scale_x_discrete(position = "top", expand = expansion(mult = c(.03, .03))) +
+  scale_y_discrete(expand = expansion(mult = c(.07, .07)))
+
+
+#ggsave(filename = "Cytokines Analysis/ED vs 6M/Plots/Recovered IL-6 ED vs 6M Heatmap.jpg",plot = heatmap_il6_recovered_y,height = 4, width = 3, dpi = 300)
+
+```
+
+## CELL FRACTIONS
+```{r}
+cell_df <- cell_fractions %>%
+  mutate(PID = as.character(PID)) %>%
+  left_join(metadata_RNA_paired %>% dplyr::select(INVENTORY.CODE, PID),
+            by = c("PID", "INVENTORY.CODE")) %>%
+  dplyr::select(PID, Timepoint, INVENTORY.CODE, everything()) 
+
+cell_types <- colnames(cell_df[, 6:ncol(cell_df)])
+
+cells_within_class_EDvsM6 <- run_within_class_EDvsM6_tests(
+  data_long = cell_df,
+  metadata = metadata_RNA_paired,
+  apns_ordered = APNS_ordered,
+  feature_cols = cell_types,
+  feature_name = "Cell Type",
+  recovered_class_for = recovered_class_for,
+  chronic_class_for = chronic_class_for,
+  format_for_export = TRUE)
+
+cells_within_class_EDvsM6_export  <- cells_within_class_EDvsM6$export_table %>%
+  dplyr::select(APNS, Group, Class, `Cell Type`, `Avg Δ (6M − ED)`,`T stat` , `SE of Δ`, `Confidence interval`, `P value`, FDR,`Direction over time`, `Avg ED`, `Avg 6M`  )
+
+
+cells_within_class_EDvsM6_export <- cells_within_class_EDvsM6_export %>%
+  dplyr::rename(
+    `Recovery Group` = Group,
+    `Cell Type` = `Cell Type`,
+    `Direction Over Time`  = `Direction over time`,
+    `Avg Δ (6M − ED)` = `Avg Δ (6M − ED)`,
+    `P Value` = `P value`,
+    `FDR` = FDR,
+    `T Stat` = `T stat`,
+    `Avg ED` = `Avg ED`,
+    `Avg 6M` = `Avg 6M`,
+    `95% CI` = `Confidence interval`,
+    `SE of Δ` = `SE of Δ`,
+    `APNS` = APNS,
+    `Class` = Class)
+
+
+cell_type_rename <- c(
+  "NK.cells.activated"= "Activated NK cells",
+  "Neutrophils" = "Neutrophils",
+  "T.cells.regulatory..Tregs." = "Regulatory T cells",
+  "T.cells.CD8" = "CD8+ T cells",
+  "B.cells.naive" = "Naive B cells",
+  "Macrophages.M2" = "M2 Macrophages",
+  "T.cells.CD4.naive" = "Naive CD4+ T cells",
+  "Mast.cells.resting"= "Resting Mast cells",
+  "B.cells.memory" = "Memory B cells",
+  "Plasma.cells" = "Plasma cells",
+  "T.cells.CD4.memory.resting"= "Resting Memory CD4+ T cells",
+  "Monocytes" = "Monocytes",
+  "NK.cells.resting" = "Resting NK cells",
+  "Dendritic.cells.activated" = "Activated Dendritic cells")
+
+cells_within_class_EDvsM6_export <- cells_within_class_EDvsM6_export %>%
+  dplyr::mutate(`Cell Type` = dplyr::recode(`Cell Type`, !!!cell_type_rename), 
+                APNS = factor(APNS, levels = (APNS_ordered), labels = (APNS_labels)))
+
+write.csv(cells_within_class_EDvsM6_export, "Cell Fraction Analysis/ED vs 6M/Summaries/Combined_Cell_Analysis.csv")
+
+
+```
+
+### Export
+```{r}
+
+cells_within_class_EDvsM6_export %>%
+  dplyr::group_split(APNS, `Recovery Group`, .keep = TRUE) %>%
+  purrr::walk(function(df) {
+
+    apns_name <- unique(df$APNS)
+    grp_name  <- unique(df$`Recovery Group`)
+
+    out_path <- file.path(
+      "Cell Fraction Analysis/ED vs 6M/Results per APNS",
+      paste0("Cells_ED_vs_6M_", apns_name, "_", grp_name, ".csv")
+    )
+
+    df %>%
+      dplyr::arrange(`P Value`) %>%   
+      readr::write_excel_csv(out_path)
+  })
+
+
+
+wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_style   <- createStyle(halign = "center", valign = "center")
+
+make_sheet_name <- function(apns, grp, existing) {
+  grp_code <- case_when(
+    grp == "Recovered" ~ "R",
+    grp == "Chronic"   ~ "C",
+    TRUE ~ as.character(grp)
+  )
+
+  nm <- substr(paste0(apns, " - ", grp_code), 1, 31)
+
+  if (nm %in% existing) {
+    i <- 2
+    repeat {
+      nm2 <- substr(paste0(nm, "_", i), 1, 31)
+      if (!(nm2 %in% existing)) return(nm2)
+      i <- i + 1
+    }
+  }
+  nm
+}
+
+existing_sheets <- character(0)
+
+for (apns in levels(cells_within_class_EDvsM6_export$APNS)) {
+
+  for (grp in levels(cells_within_class_EDvsM6_export$`Recovery Group`)) {
+
+    df_sub <- cells_within_class_EDvsM6_export %>%
+      filter(APNS == apns, `Recovery Group` == grp) %>%
+      arrange(as.numeric(`FDR`), as.numeric(`P Value`)) 
+
+    if (nrow(df_sub) == 0) next
+
+    sheet_name <- make_sheet_name(apns, grp, existing_sheets)
+    existing_sheets <- c(existing_sheets, sheet_name)
+
+    addWorksheet(wb, sheet_name)
+
+    writeData(wb, sheet = sheet_name, x = df_sub)
+
+    addStyle(wb, sheet_name, header_style,
+             rows = 1, cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+    if (nrow(df_sub) > 0) {
+      addStyle(wb, sheet_name, body_style,
+               rows = 2:(nrow(df_sub) + 1),
+               cols = 1:ncol(df_sub), gridExpand = TRUE)
+    }
+
+    setColWidths(wb, sheet_name, cols = 1:ncol(df_sub), widths = "auto")
+  }
+}
+
+saveWorkbook(wb, "Cell Fraction Analysis/ED vs 6M/Summaries/All_APNS_Cells_ED_vs_6M.xlsx", overwrite = TRUE)
+
+```
+
+### Summary 
+```{r}
+cell_types <- cells_within_class_EDvsM6_export %>%
+  mutate(`P Value` = as.numeric(`P Value`)) %>%
+  group_by(`Cell Type`) %>%
+  summarise(
+    min_p = min(`P Value`, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(min_p) %>%
+  pull(`Cell Type`)
+
+apns_string <- function(apns) {
+  if (length(apns) == 0) return("")
+  paste0(apns, collapse = "; ")
+}
+
+table_cell_apns_summary <- cells_within_class_EDvsM6_export %>%
+  mutate(across(c(`Avg Δ (6M − ED)`, `P Value`, `FDR`, `T Stat`,
+                  `Avg ED`, `Avg 6M`, `SD of Δ`, `SE of Δ`), as.numeric)) %>%
+  mutate(is_sig = !is.na(FDR) & FDR < 0.01) %>%
+  group_by(`Cell Type`, `Recovery Group`) %>%
+  summarise(
+    `APNS Avg Δ (6M − ED)` = mean(`Avg Δ (6M − ED)`, na.rm = TRUE),
+    `APNS SE` = sd(`Avg Δ (6M − ED)`, na.rm = TRUE) / sqrt(sum(!is.na(`Avg Δ (6M − ED)`))),
+    `APNS Avg P Value` = mean(`P Value`, na.rm = TRUE),
+    `APNS Avg FDR` = mean(`FDR`, na.rm = TRUE),
+    `APNS Avg T Stat` = mean(`T Stat`, na.rm = TRUE),
+    `APNS Avg ED` = mean(`Avg ED`, na.rm = TRUE),
+    `APNS Avg 6M` = mean(`Avg 6M`, na.rm = TRUE),
+    `APNS Avg SD of Δ` = mean(`SD of Δ`, na.rm = TRUE),
+    `APNS Avg SE of Δ` = mean(`SE of Δ`, na.rm = TRUE),
+
+    `Count of Significant APNS Tests` = sum(is_sig, na.rm = TRUE),
+
+    `Significant APNS (ED vs 6M T-tests, FDR < 0.01)` = {
+      apns_sig <- APNS[is_sig]
+      apns_string(apns_sig)},
+    .groups = "drop") %>%
+  mutate(`Cell Type` = factor(`Cell Type`, levels = cell_types)) %>%
+  arrange(`Cell Type`) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+
+# export  ----------------------------------------------
+
+wb <- createWorkbook()
+addWorksheet(wb, "APNS Summary")
+
+writeData(
+  wb,
+  sheet = "APNS Summary",
+  x = table_cell_apns_summary,
+  withFilter = FALSE
+)
+
+# styling
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_style   <- createStyle(halign = "center", valign = "center")
+
+addStyle(wb, "APNS Summary", header_style,
+         rows = 1, cols = 1:ncol(table_cell_apns_summary), gridExpand = TRUE)
+
+addStyle(wb, "APNS Summary", body_style,
+         rows = 2:(nrow(table_cell_apns_summary) + 1),
+         cols = 1:ncol(table_cell_apns_summary), gridExpand = TRUE)
+
+setColWidths(wb, "APNS Summary", cols = 1:ncol(table_cell_apns_summary), widths = "auto")
+
+saveWorkbook(wb, "Cell Fraction Analysis/ED vs 6M/Summaries/Cell_APNS_Summary_ED_vs_6M.xlsx", overwrite = TRUE)
+
+```
+
+### Heatmap 
+```{r}
+
+cells_to_plot <- c( "Neutrophils", "CD8+ T cells", "Regulatory T cells", "Activated NK cells", 
+                    "Resting NK cells", "Monocytes", "Naive B cells")
+
+
+prep_cell_heatmap_export <- function(df, recovery_group = "Recovered") {
+  df %>%
+    filter(`Recovery Group` == recovery_group,
+           `Cell Type` %in% cells_to_plot) %>%
+    mutate(
+      `Avg Δ (6M − ED)` = as.numeric(`Avg Δ (6M − ED)`),
+      FDR = as.numeric(FDR),
+
+      APNS = factor(APNS, levels = rev(levels(APNS))),
+      `Cell Type` = factor(`Cell Type`, levels = cells_to_plot),
+
+      neglogFDR = if_else(!is.na(FDR) & FDR > 0, -log10(FDR), NA_real_),
+
+      # only significant gets a value, and it is capped
+      neglogFDR_plot = if_else(!is.na(FDR) & FDR <= 0.01,
+                               pmin(neglogFDR, 10),
+                               NA_real_)
+    )
+}
+
+cell_hm_recovered <- prep_cell_heatmap_export(cells_within_class_EDvsM6_export, "Recovered") 
+
+range(cell_hm_recovered$`Avg Δ (6M − ED)`, na.rm = TRUE)
+
+cell_heatmap <- ggplot(cell_hm_recovered, aes(x = `Cell Type`, y = APNS)) +
+  geom_point(aes(size = neglogFDR_plot, fill = `Avg Δ (6M − ED)`),
+             shape = 21, color = "grey20", stroke = 0.4, na.rm = TRUE) +
+  
+  scale_size_area(name = "-log10(FDR)", max_size = 10, limits = c(2,10),
+                  breaks = c(2, 6, 10), labels = c("2","6",">10")) +
+  
+  scale_fill_gradient2(name = "Δ Cell Fraction\n(ED \u2192 6M)",
+    low = "#006A98", mid = "white", high = "#67B6B2", midpoint = 0,
+    limits = c(-0.12, 0.12), breaks = c(-0.1, 0, 0.1), na.value = "white") +
+  
+  guides(fill = guide_colorbar(title.position = "top", title.hjust = 0.5,
+                             barheight = unit(2.25, "cm"), barwidth = unit(0.6, "cm"),
+                             title.theme = element_text(size = 11, margin = margin(b = 8))), 
+         size = guide_legend(order = 1)) +
+  labs(x = "Estimate Cell Fractions", y = NULL, tilte = NULL) +
+
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major = element_line(linewidth = 0.5),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+
+    axis.text.x.top = element_text(color = "black", size = 12, angle = 35, hjust = 0, margin = margin(b = -35)),
+    axis.ticks.x.top = element_line(color = "black", linewidth = 0.5),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.title = element_blank(),
+
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.just = "center",
+    legend.title = element_text(size = 11, hjust = 0.5),
+    legend.text  = element_text(size = 11), 
+    legend.margin = margin(t = -5, r = 0, b = 0, l = 0), 
+    plot.margin = margin(t = 30, r = 5, b = 5, l = 5)) +
+  scale_y_discrete(expand = expansion(mult = c(.07, .07))) +
+  scale_x_discrete(position = "top", expand = expansion(mult = c(.075, .075))) 
+
+
+ggsave(cell_heatmap, filename = "Cell Fraction Analysis/ED vs 6M/Plots/Recovered ED vs 6M Cell Proportion Change Heatmap.jpg", width = 6, height = 4, dpi = 300)
+
+
+```
+
+
+
+
+
+## TRANSCRIPTION FACTORS 
+
+```{r}
+TF_data <- TF_activity %>%
+  mutate(PID = as.character(PID))  %>%
+  dplyr::select(-X) %>%
+  dplyr::select(PID, Timepoint, INVENTORY.CODE, everything())
+
+TFs <- colnames(TF_data[, 4:ncol(TF_data)])
+length(TFs) # 138
+
+TF_within_class_EDvsM6 <- run_within_class_EDvsM6_tests(
+  data_long = TF_data,
+  metadata = metadata_RNA_paired,
+  apns_ordered = APNS_ordered,
+  feature_cols = TFs,
+  feature_name = "TF",
+  recovered_class_for = recovered_class_for,
+  chronic_class_for = chronic_class_for,
+  format_for_export = TRUE)
+
+
+TF_within_class_EDvsM6_export  <- TF_within_class_EDvsM6$export_table %>%
+  dplyr::select(APNS, Group, Class, TF, `Avg Δ (6M − ED)`,`T stat` , `SE of Δ`, `Confidence interval`, `P value`, FDR,`Direction over time`, `Avg ED`, `Avg 6M`  )
+
+TF_within_class_EDvsM6_export <- TF_within_class_EDvsM6_export %>%
+  dplyr::rename(
+    `Recovery Group` = Group,
+    `TF` = TF,
+    `Direction Over Time`  = `Direction over time`,
+    `Avg Δ (6M − ED)` = `Avg Δ (6M − ED)`,
+    `P Value` = `P value`,
+    `FDR` = FDR,
+    `T Stat` = `T stat`,
+    `Avg ED` = `Avg ED`,
+    `Avg 6M` = `Avg 6M`,
+    `95% CI` = `Confidence interval`,
+    `SE of Δ` = `SE of Δ`,
+    `APNS` = APNS,
+    `Class` = Class)
+
+#write.csv(TF_within_class_EDvsM6_export, "Transcription Factor Analysis/ED vs 6M/Summaries/Combined_TF_analysis.csv")
+
+```
+
+### Export
+```{r}
+
+TF_within_class_EDvsM6_export %>%
+  dplyr::group_split(APNS, `Recovery Group`, .keep = TRUE) %>%
+  purrr::walk(function(df) {
+
+    apns_name <- unique(df$APNS)
+    grp_name  <- unique(df$`Recovery Group`)
+
+    out_path <- file.path(
+      "Transcription Factor Analysis/ED vs 6M/Results per APNS",
+      paste0("TFs_ED_vs_6M_global", apns_name, "_", grp_name, ".csv")
+    )
+
+    df %>%
+      dplyr::arrange(`P Value`) %>%   
+      readr::write_excel_csv(out_path)
+  })
+
+
+
+wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_style   <- createStyle(halign = "center", valign = "center")
+
+make_sheet_name <- function(apns, grp, existing) {
+  grp_code <- case_when(
+    grp == "Recovered" ~ "R",
+    grp == "Chronic"   ~ "C",
+    TRUE ~ as.character(grp)
+  )
+
+  nm <- substr(paste0(apns, " - ", grp_code), 1, 31)
+
+  if (nm %in% existing) {
+    i <- 2
+    repeat {
+      nm2 <- substr(paste0(nm, "_", i), 1, 31)
+      if (!(nm2 %in% existing)) return(nm2)
+      i <- i + 1
+    }
+  }
+  nm
+}
+
+existing_sheets <- character(0)
+
+for (apns in APNS_ordered) {
+
+  for (grp in levels(TF_within_class_EDvsM6_export$`Recovery Group`)) {
+
+    df_sub <- TF_within_class_EDvsM6_export %>%
+      filter(APNS == apns, `Recovery Group` == grp) %>%
+      arrange(as.numeric(`FDR`), as.numeric(`P Value`)) 
+
+    if (nrow(df_sub) == 0) next
+
+    sheet_name <- make_sheet_name(apns, grp, existing_sheets)
+    existing_sheets <- c(existing_sheets, sheet_name)
+
+    addWorksheet(wb, sheet_name)
+
+    writeData(wb, sheet = sheet_name, x = df_sub)
+
+    addStyle(wb, sheet_name, header_style,
+             rows = 1, cols = 1:ncol(df_sub), gridExpand = TRUE)
+
+    if (nrow(df_sub) > 0) {
+      addStyle(wb, sheet_name, body_style,
+               rows = 2:(nrow(df_sub) + 1),
+               cols = 1:ncol(df_sub), gridExpand = TRUE)
+    }
+
+    setColWidths(wb, sheet_name, cols = 1:ncol(df_sub), widths = "auto")
+  }
+}
+
+saveWorkbook(wb, "Transcription Factor Analysis/ED vs 6M/Summaries/All_APNS_TFs_ED_vs_6M.xlsx", overwrite = TRUE)
+
+```
+
+### Summary 
+```{r}
+TFs <- TF_within_class_EDvsM6_export %>%
+  mutate(`P Value` = as.numeric(`P Value`)) %>%
+  group_by(TF) %>%
+  summarise(
+    min_p = min(`P Value`, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(min_p) %>%
+  pull(TF)
+
+apns_string <- function(apns) {
+  if (length(apns) == 0) return("")
+  paste0(apns, collapse = "; ")
+}
+
+table_TF_apns_summary <- TF_within_class_EDvsM6_export %>%
+  mutate(across(c(`Avg Δ (6M − ED)`, `P Value`, `FDR`, `T Stat`,
+                  `Avg ED`, `Avg 6M`, `SD of Δ`, `SE of Δ`), as.numeric)) %>%
+  mutate(is_sig = !is.na(FDR) & FDR < 0.01) %>%
+  group_by(TF, `Recovery Group`) %>%
+  summarise(
+    `APNS Avg Δ (6M − ED)` = mean(`Avg Δ (6M − ED)`, na.rm = TRUE),
+    `APNS SE` = sd(`Avg Δ (6M − ED)`, na.rm = TRUE) / sqrt(sum(!is.na(`Avg Δ (6M − ED)`))),
+    `APNS Avg P Value` = mean(`P Value`, na.rm = TRUE),
+    `APNS Avg FDR` = mean(`FDR`, na.rm = TRUE),
+    `APNS Avg T Stat` = mean(`T Stat`, na.rm = TRUE),
+    `APNS Avg ED` = mean(`Avg ED`, na.rm = TRUE),
+    `APNS Avg 6M` = mean(`Avg 6M`, na.rm = TRUE),
+    `APNS Avg SD of Δ` = mean(`SD of Δ`, na.rm = TRUE),
+    `APNS Avg SE of Δ` = mean(`SE of Δ`, na.rm = TRUE),
+
+    `Count of Significant APNS Tests` = sum(is_sig, na.rm = TRUE),
+
+    `Significant APNS (ED vs 6M T-tests, FDR < 0.01)` = {
+      apns_sig <- APNS[is_sig]
+      apns_string(apns_sig)},
+    .groups = "drop") %>%
+  mutate(TF = factor(TF, levels = TFs)) %>%
+  arrange(TF) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+
+# export  ----------------------------------------------
+
+wb <- createWorkbook()
+addWorksheet(wb, "APNS Summary")
+
+writeData(
+  wb,
+  sheet = "APNS Summary",
+  x = table_TF_apns_summary,
+  withFilter = FALSE
+)
+
+# styling
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_style   <- createStyle(halign = "center", valign = "center")
+
+addStyle(wb, "APNS Summary", header_style,
+         rows = 1, cols = 1:ncol(table_TF_apns_summary), gridExpand = TRUE)
+
+addStyle(wb, "APNS Summary", body_style,
+         rows = 2:(nrow(table_TF_apns_summary) + 1),
+         cols = 1:ncol(table_TF_apns_summary), gridExpand = TRUE)
+
+setColWidths(wb, "APNS Summary", cols = 1:ncol(table_TF_apns_summary), widths = "auto")
+
+saveWorkbook(wb, "Transcription Factor Analysis/ED vs 6M/Summaries/TF_APNS_Summary_ED_vs_6M.xlsx", overwrite = TRUE)
+
+# Create the table of all_DEA_results genes and order APNS and Class
+TF_sig_counts <- TF_within_class_EDvsM6$ttest_results %>%
+  filter(FDR < 0.01) %>%
+  group_by(APNS, Direction, Class) %>%
+  summarise(n_TFs = n(), .groups = "drop") %>%
+  tidyr::pivot_wider(
+    names_from = Direction,
+    values_from = n_TFs,
+    values_fill = 0) %>%
+  mutate(Total = `Higher at ED` + `Higher at 6M`) %>%
+  arrange(match(APNS, APNS_ordered))
+
+write.csv(TF_sig_counts, "Transcription Factor Analysis/ED vs 6M/Summaries/TF Significant Count Global.csv")
+
+
+```
+
+
+### Heatmap 
+```{r}
+# identify TFs significant across all 10 APNS in the recovered group
+tf_keep <- TF_within_class_EDvsM6_export %>%
+  filter(`Recovery Group` == "Recovered") %>%
+  mutate(
+    delta = as.numeric(`Avg Δ (6M − ED)`),
+    FDR = as.numeric(FDR)) %>%
+  filter(!is.na(FDR) & FDR <= 0.01) %>%
+  distinct(APNS, TF) %>%
+  count(TF, name = "n_APNS_sig") %>%
+  filter(n_APNS_sig == 10) %>%
+  pull(TF)
+
+tf_recovered <- TF_within_class_EDvsM6_export %>%
+  filter(`Recovery Group` == "Recovered") %>%
+  mutate(
+    delta = as.numeric(`Avg Δ (6M − ED)`),
+    FDR = as.numeric(FDR)) %>%
+  filter(TF %in% tf_keep)
+
+# rank only TFs significant across all 10 APNS
+tf_levels <- tf_recovered %>%
+  group_by(TF, `Direction Over Time`) %>%
+  summarise(
+    Avg_APNS_FDR = mean(FDR, na.rm = TRUE),
+    Avg_abs_delta = mean(abs(delta), na.rm = TRUE),
+    .groups = "drop") %>%
+  group_by(`Direction Over Time`) %>%
+  arrange(Avg_APNS_FDR, desc(Avg_abs_delta), .by_group = TRUE) %>%
+  slice_head(n = 15) %>%
+  ungroup() %>%
+  arrange(`Direction Over Time`, Avg_APNS_FDR, desc(Avg_abs_delta)) %>%
+  pull(TF) %>%
+  unique()
+
+TF_hm <- TF_within_class_EDvsM6_export %>%
+  filter(`Recovery Group` == "Recovered", TF %in% tf_levels) %>%
+  mutate(
+    delta = as.numeric(`Avg Δ (6M − ED)`),
+    FDR = as.numeric(FDR),
+    APNS = factor(APNS, levels = rev(APNS_ordered)),
+    TF = factor(TF, levels = tf_levels),
+    neglogFDR = case_when(
+      !is.na(FDR) & FDR > 0 & FDR <= 0.01 ~ -log10(FDR),
+      TRUE ~ NA_real_),
+    neglogFDR_cap = pmin(neglogFDR, 10)) %>%
+  mutate(APNS = factor(APNS, levels = rev(APNS_ordered), labels = rev(APNS_labels)))
+
+tf_order <- TF_hm %>%
+  group_by(TF) %>%
+  summarise(mean_change = mean(delta, na.rm = TRUE), .groups = "drop") %>%
+  arrange(mean_change) %>%
+  pull(TF)
+
+range(TF_hm$delta)
+
+TF_heatmap <- ggplot(TF_hm, aes(x = TF, y = APNS)) +
+  geom_point(shape = 21, size = 3, fill = "white", color = "grey70", stroke = 0.35) +
+  
+  geom_point(aes(size = neglogFDR_cap, fill = delta),
+             shape = 21, color = "grey20", stroke = 0.5, na.rm = TRUE) +
+
+  scale_size_area(name = "-log10(FDR)", max_size = 10,
+                  limits = c(2, 10),
+                  breaks = c(2, 6, 10), 
+                  labels = c("2", "6", ">10")) +
+  
+  scale_fill_gradient2(
+    name = "Δ TF activity\n(ED \u2192 6M)",
+    low = "#0067A3", mid = "white", high = "#00A9A5",
+    limits = c(-0.83, 0.6),
+    breaks = c(-0.4, 0, 0.4),
+    na.value = "white") +
+ 
+  guides(fill = guide_colorbar(title.position = "top",
+                               title.hjust = 0.5,
+                               barheight = unit(2.25, "cm"),
+                               barwidth = unit(0.6, "cm"),
+                               title.theme = element_text(size = 11, margin = margin(b = 8)))) +
+  labs(x = NULL, y = NULL, title = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_line(size = 0.5),
+
+    axis.text.x.top = element_text(angle = 45, hjust = 0, vjust = 0, size = 11, color = "black", margin = margin(b=0)),
+    axis.ticks.x.top = element_line(color = "black", linewidth = 0.5),
+
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title = element_text(size = 14, color = "black", face = "bold"),
+    
+    legend.margin = margin(t = -5, r = 0, b = 0, l = 0),
+    legend.title = element_text(hjust = 0.5, size = 11),
+    legend.text  = element_text(size = 11), 
+    
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
+
+  scale_x_discrete(limits = tf_order, position = "top", expand = expansion(mult = c(.04, .04))) +
+  scale_y_discrete(expand = expansion(mult = c(.07, .07)))
+
+
+ggsave(filename = "Transcription Factor Analysis/ED vs 6M/Plots/TF Heatmap Recovered 6-4.jpg",
+       plot = TF_heatmap, width = 10, height = 4, dpi = 600)
+
+
+
+```
+
+# CRP 
+```{r}
+
+CRP_data_male <- CRP_data %>% 
+  left_join(metadata, by = "PID") %>%
+  filter(Gender == "Female") 
+
+CRP_for_tests <- CRP_data_male %>%
+  mutate(PID = as.character(PID)) %>%
+  dplyr::select(
+    PID,
+    Timepoint,
+    CRP_log_adj
+  )
+
+
+CRP_within_class_EDvsM6 <- run_within_class_EDvsM6_tests(
+  data_long = CRP_for_tests,
+  metadata = metadata_RNA_paired,
+  apns_ordered = APNS_ordered,
+  feature_cols = "CRP_log_adj",
+  feature_name = "CRP",
+  recovered_class_for = recovered_class_for,
+  chronic_class_for = chronic_class_for,
+  format_for_export = TRUE
+) 
+
+CRP_within_class_EDvsM6_export <- CRP_within_class_EDvsM6$export_table %>%
+  dplyr::rename(
+    `Recovery Group` = Group,
+    `CRP` = CRP,
+    `Direction Over Time` = `Direction over time`,
+    `Avg Δ (6M − ED)` = `Avg Δ (6M − ED)`,
+    `P Value` = `P value`,
+    `FDR` = FDR,
+    `T Stat` = `T stat`,
+    `Avg ED` = `Avg ED`,
+    `Avg 6M` = `Avg 6M`,
+    `95% CI` = `Confidence interval`,
+    `SD of Δ` = `SD of Δ`,
+    `SE of Δ` = `SE of Δ`,
+    `APNS` = APNS,
+    `Class` = Class,
+    `Sample size (pairs)` = `Total pairs`
+  ) %>%
+  dplyr::select(-FDR) %>%
+  dplyr::select(APNS, `Recovery Group`, everything())
+
+write.csv(CRP_within_class_EDvsM6_export, "CRP Analysis/ED vs 6M/CRP_Within_Class_longitudinal_changes_female.csv")
+
+```
+
+
+## COMBINING PLOTS 
+```{r}
+DEG_heatmap_comb <- DEG_heatmap +
+  theme(plot.margin = margin(10, 10, 20, 10))
+
+cell_heatmap_comb <- cell_heatmap +
+  theme(plot.margin = margin(20, 10, 20, 20))
+
+IL6_heatmap_comb <- IL6_heatmap +
+  theme(plot.margin = margin(10, 10, 20, 20))
+
+TF_heatmap_comb  <- TF_heatmap +
+  theme(plot.margin = margin(10, 10, 20, 10))
+
+#reactome_heatmap_comb  <- Reactome_heatmap +
+#  theme(plot.margin = margin(20, 10, 20, 10))
+
+GOBP_heatmap_comb  <- GOBP_heatmap +
+  theme(plot.margin = margin(10, 10, 20, 10))
+
+# bottom row: cell + IL6 side by side
+bottom_row <- ggarrange(
+  cell_heatmap_comb,
+  IL6_heatmap_comb,
+  ncol = 2,
+  widths = c(1, 0.5),
+  align = "hv", 
+  labels = c("d", "e"),
+  font.label = list(size = 26, face = "bold"),
+  label.x = 0.01,
+  label.y = 1.06)
+
+# full vertical stack
+combined_reactome <- ggarrange(
+  DEG_heatmap_comb,
+  reactome_heatmap_comb,
+  TF_heatmap_comb,
+  bottom_row,
+  ncol = 1,
+  heights = c(1, 0.75, 1, 1),
+  labels = c("a", "b", "c",""),
+  font.label = list(size = 26, face = "bold"),
+  label.x = 0.01,
+  label.y = 1.05)
+
+ggsave(combined_reactome, filename = "Final Figures/Figure 3 - ED vs 6M Analyses - Reactome 6-4.jpg",
+  width = 10, height = 14, dpi = 300)
+
+# full vertical stack
+combined_gobp <- ggarrange(
+  DEG_heatmap_comb,
+  GOBP_heatmap_comb,
+  TF_heatmap_comb,
+  bottom_row,
+  ncol = 1,
+  heights = c(1, 1.25, 1, 1),
+  labels = c("a", "b", "c",""),
+  font.label = list(size = 26, face = "bold"),
+  label.x = 0.01,
+  label.y = 1.05)
+
+ggsave(combined_gobp, filename = "Figures/Figure 3 - ED vs 6M Analyses - GOBP 8-7.jpg",
+  width = 10, height = 14, dpi = 600)
+
+```
+
+
+

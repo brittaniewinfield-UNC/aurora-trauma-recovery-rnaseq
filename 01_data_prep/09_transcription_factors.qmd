@@ -1,0 +1,117 @@
+---
+title: "Transcription Factor Activity Data Preparation"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 1428-1519 ---- -->
+
+# TRANSCRIPTION FACTOR 
+
+## Prep Data 
+```{r}
+# prepare counts
+RNA_seq_counts_tf <- AURORA_RNA_Seq_V47_counts_clean %>%
+  mutate(PID = as.character(PID)) %>%
+  left_join(RNA_manifest[, c("INVENTORY.CODE", "Timepoint")], by = "INVENTORY.CODE") %>%
+  dplyr::select(INVENTORY.CODE, PID, Timepoint, everything())
+
+# merge metadata and counts
+#TF_analysis_data <- Metadata_Analysis_RNA_paired %>%
+#  inner_join(RNA_seq_counts_tf, by = c("INVENTORY.CODE", "PID")) %>%
+#  as.data.frame()
+
+TF_analysis_data <- RNA_seq_counts_tf %>%
+  as.data.frame()
+
+
+rownames(TF_analysis_data) <- TF_analysis_data$INVENTORY.CODE
+
+# split metadata and counts
+metadata_tf <- TF_analysis_data %>%
+  dplyr::select(1:3)
+
+count_matrix_tf <- TF_analysis_data %>%
+  dplyr::select(-(1:3))
+
+# transpose counts: genes as rows, samples as columns
+count_matrix_tf <- t(count_matrix_tf)
+colnames(count_matrix_tf) <- rownames(TF_analysis_data)
+
+
+# build regulon list
+data(dorothea_hs, package = "dorothea")
+
+reg_list <- dorothea_hs %>%
+  filter(confidence %in% c("A", "B", "C")) %>%
+  dorothea::df2regulon()
+
+# global normalization
+dge_tf <- edgeR::DGEList(counts = round(count_matrix_tf))
+
+keep_tf <- edgeR::filterByExpr(dge_tf,
+  group = metadata_tf$Timepoint,
+  min.count = 3)
+
+dge_tf <- dge_tf[keep_tf, , keep.lib.sizes = FALSE]
+dge_tf <- edgeR::calcNormFactors(dge_tf)
+
+voom_tf <- limma::voom(dge_tf, plot = FALSE)
+
+# match gene symbols to regulon naming
+rownames(voom_tf$E) <- toupper(rownames(voom_tf$E))
+voom_tf$E <- voom_tf$E[!duplicated(rownames(voom_tf$E)), , drop = FALSE]
+
+# infer TF activity globally
+tf_activity_mat <- viper::viper(
+  voom_tf$E,
+  reg_list,
+  minsize = 25,
+  verbose = FALSE)
+
+```
+
+## Data for analysis 
+```{r}
+# convert to sample x TF dataframe
+tf_activity_df <- tf_activity_mat %>%
+  t() %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("INVENTORY.CODE") %>%
+  left_join(
+    metadata_tf %>% dplyr::select(INVENTORY.CODE, PID, Timepoint),
+    by = "INVENTORY.CODE")
+
+dim(tf_activity_df)
+
+write.csv(tf_activity_df, "Data/Transcription Factor Data/Analysis Data/TF_Activity_890_3-31-2026.csv")
+
+
+tf_activity_df_ED6M <- tf_activity_df %>%
+  filter(INVENTORY.CODE %in% ICs_490_ED6M)
+
+write.csv(tf_activity_df_ED6M, "Data/Transcription Factor Data/Analysis Data/TF_Activity_ED6M_490_3-31-2026.csv")
+
+tf_activity_df_ED2WK6M <- tf_activity_df %>%
+  filter(INVENTORY.CODE %in% ICs_120_ED2WK6M)
+
+write.csv(tf_activity_df_ED2WK6M, "Data/Transcription Factor Data/Analysis Data/TF_Activity_ED2WK6M_120_3-31-2026.csv")
+```
+
+

@@ -1,0 +1,433 @@
+---
+title: "Two-Week Subset: Differential Expression Analyses"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
+
+<!-- ---- original lines 156-563 ---- -->
+
+# DIFFERENTIAL EXPRESSION ANALYSES
+```{r}
+# RNA counts
+RNA_counts <- RNA_counts_2wk %>%
+  dplyr::select(-PID)
+
+# metadata for participants with ED/WK2/M6 RNA samples
+DEA_metadata_2wk <- metadata_ICs_2wk %>%
+  mutate(PID = as.character(PID)) %>%
+  dplyr::select(INVENTORY.CODE, PID, Timepoint) %>%
+  inner_join(RRS_df_median_2wk, by = "PID")
+
+
+# merge metadata + counts
+DEA_data_2wk <- DEA_metadata_2wk %>%
+  dplyr::select(-X) %>%
+  inner_join(RNA_counts, by = "INVENTORY.CODE") %>%
+  dplyr::select(-X)
+
+rownames(DEA_data_2wk) <- DEA_data_2wk$INVENTORY.CODE
+
+# define metadata columns explicitly
+meta_cols <- c("INVENTORY.CODE", "PID", "Timepoint", "RRS", "Group", "RRS_median_group")
+
+coldata_2wk <- DEA_data_2wk %>%
+  dplyr::select(all_of(meta_cols))
+
+count_matrix_2wk <- DEA_data_2wk %>%
+  dplyr::select(-all_of(meta_cols))
+
+all(sapply(count_matrix_2wk, is.numeric))
+
+# transpose counts
+count_matrix_t_2wk <- t(as.matrix(count_matrix_2wk))
+colnames(count_matrix_t_2wk) <- rownames(DEA_data_2wk)
+
+# final alignment checks
+identical(colnames(count_matrix_t_2wk), rownames(coldata_2wk))
+identical(rownames(coldata_2wk), DEA_data_2wk$INVENTORY.CODE)
+
+# factors
+coldata_2wk$PID <- factor(coldata_2wk$PID)
+coldata_2wk$Timepoint <- factor(coldata_2wk$Timepoint, levels = c("ED", "WK2", "M6"))
+coldata_2wk$RRS_median_group <- factor(coldata_2wk$RRS_median_group,
+                                       levels = c("High_RRS", "Low_RRS"))
+
+# global filtering + normalization on 3-timepoint subset
+dge_global_2wk <- DGEList(
+  counts = round(count_matrix_t_2wk),
+  genes = rownames(count_matrix_t_2wk))
+
+keep_2wk <- filterByExpr(dge_global_2wk, group = coldata_2wk$Timepoint, min.count = 3)
+dge_global_2wk <- dge_global_2wk[keep_2wk, , keep.lib.sizes = FALSE]
+dge_global_2wk <- calcNormFactors(dge_global_2wk)
+
+cat("Genes retained after global filtering:", nrow(dge_global_2wk), "\n")
+
+output_dir <- "2WK Analyses/Differential Expression Analyses/Results"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+groups_to_run <- c("High_RRS", "Low_RRS")
+
+comparisons <- list(
+  list(name = "ED_vs_WK2", t1 = "ED",  t2 = "WK2"),
+  list(name = "WK2_vs_M6", t1 = "WK2", t2 = "M6"),
+  list(name = "ED_vs_M6",  t1 = "ED",  t2 = "M6"))
+
+all_results_2wk_pairwise <- list()
+
+param <- SerialParam()
+
+for (grp in groups_to_run) {
+  
+  cat("\n============================\n")
+  cat("Processing group:", grp, "\n")
+  cat("============================\n")
+  
+  group_metadata_all <- coldata_2wk %>%
+    filter(RRS_median_group == grp)
+  
+  cat("  Samples:", nrow(group_metadata_all), "\n")
+  cat("  Participants:", n_distinct(group_metadata_all$PID), "\n")
+  
+  tp_check <- group_metadata_all %>%
+    count(PID, name = "n_samples") %>%
+    count(n_samples, name = "n_PIDs")
+  print(tp_check)
+  
+  for (comp in comparisons) {
+    
+    comp_name <- comp$name
+    t1 <- comp$t1
+    t2 <- comp$t2
+    
+    cat("  Comparison:", comp_name, "\n")
+    
+    # subset to the two timepoints for this comparison
+    comp_metadata <- group_metadata_all %>%
+      filter(Timepoint %in% c(t1, t2)) %>%
+      group_by(PID) %>%
+      filter(n_distinct(Timepoint) == 2) %>%
+      ungroup()
+    
+    comp_metadata$PID <- factor(comp_metadata$PID)
+    comp_metadata$Timepoint <- factor(comp_metadata$Timepoint, levels = c(t1, t2))
+    comp_metadata$Timepoint <- relevel(comp_metadata$Timepoint, ref = t1)
+    
+    comp_metadata <- as.data.frame(comp_metadata)
+    rownames(comp_metadata) <- comp_metadata$INVENTORY.CODE
+    
+    dge <- dge_global_2wk[, comp_metadata$INVENTORY.CODE]
+    comp_metadata <- comp_metadata[colnames(dge), , drop = FALSE]
+    
+    stopifnot(identical(colnames(dge), rownames(comp_metadata)))
+    
+    form <- ~ Timepoint + (1 | PID)
+    
+    v <- voomWithDreamWeights(dge, form, comp_metadata, BPPARAM = param)
+    fit <- dream(v, form, comp_metadata, BPPARAM = param)
+    fit <- eBayes(fit)
+    
+    coef_name <- paste0("Timepoint", t2)
+    
+    res_comp <- topTable(fit, coef = coef_name, number = Inf, sort.by = "P")
+    res_comp$Group <- grp
+    res_comp$Comparison <- comp_name
+    res_comp$Gene <- rownames(res_comp)
+    
+    res_comp$Abs_logFC <- abs(res_comp$logFC)
+    res_comp$Direction <- ifelse(res_comp$logFC > 0,
+                                 paste0("Higher at ", t2),
+                                 paste0("Higher at ", t1))
+    
+    t1_samples <- intersect(comp_metadata$INVENTORY.CODE[comp_metadata$Timepoint == t1], colnames(v$E))
+    t2_samples <- intersect(comp_metadata$INVENTORY.CODE[comp_metadata$Timepoint == t2], colnames(v$E))
+    
+    t1_means_df <- data.frame(
+      Gene = rownames(v$E),
+      Mean_t1 = rowMeans(v$E[, t1_samples, drop = FALSE], na.rm = TRUE)
+    )
+    
+    t2_means_df <- data.frame(
+      Gene = rownames(v$E),
+      Mean_t2 = rowMeans(v$E[, t2_samples, drop = FALSE], na.rm = TRUE)
+    )
+    
+    names(t1_means_df)[2] <- paste0(t1, "_mean")
+    names(t2_means_df)[2] <- paste0(t2, "_mean")
+    
+    res_comp <- merge(res_comp, t1_means_df, by = "Gene", all.x = TRUE)
+    res_comp <- merge(res_comp, t2_means_df, by = "Gene", all.x = TRUE)
+    
+    sig_genes <- res_comp[res_comp$adj.P.Val < 0.05, ]
+    nonsig_genes <- res_comp[res_comp$adj.P.Val >= 0.05, ]
+    
+    sig_genes <- sig_genes[order(-sig_genes$Abs_logFC), ]
+    nonsig_genes <- nonsig_genes[order(nonsig_genes$adj.P.Val), ]
+    
+    res_comp <- rbind(sig_genes, nonsig_genes)
+    
+    mean_cols <- c(paste0(t1, "_mean"), paste0(t2, "_mean"))
+    
+    res_comp <- res_comp[, c(
+      "Gene", "Comparison", "Group",
+      "logFC", "Abs_logFC", "t", "B", "z.std",
+      "P.Value", "adj.P.Val", "Direction",
+      "AveExpr", mean_cols
+    )]
+    
+    num_cols <- sapply(res_comp, is.numeric)
+    res_comp[num_cols] <- lapply(res_comp[num_cols], signif, digits = 3)
+    
+    write.csv(
+      res_comp,
+      file = file.path(output_dir, paste0("DEA_", grp, "_", comp_name, ".csv")),
+      row.names = FALSE
+    )
+    
+    all_results_2wk_pairwise[[paste(grp, comp_name, sep = "_")]] <- res_comp
+    
+    cat("    Done.\n")
+  }
+}
+
+all_results_2wk_pairwise <- bind_rows(all_results_2wk_pairwise)
+
+```
+
+## Load data 
+```{r}
+high_RRS_ED2WK <- read.csv("2WK Analyses/Differential Expression Analyses/Results/DEA_High_RRS_ED_vs_WK2.csv")
+
+high_RRS_2WK6M <- read.csv("2WK Analyses/Differential Expression Analyses/Results/DEA_High_RRS_WK2_vs_M6.csv")
+
+high_RRS_ED6M <- read.csv("2WK Analyses/Differential Expression Analyses/Results/DEA_High_RRS_ED_vs_M6.csv")
+
+low_RRS_ED2WK <- read.csv("2WK Analyses/Differential Expression Analyses/Results/DEA_Low_RRS_ED_vs_WK2.csv")
+
+low_RRS_2WK6M <- read.csv("2WK Analyses/Differential Expression Analyses/Results/DEA_Low_RRS_WK2_vs_M6.csv")
+
+low_RRS_ED6M <- read.csv("2WK Analyses/Differential Expression Analyses/Results/DEA_Low_RRS_ED_vs_M6.csv")
+
+all_results_2wk <- bind_rows(high_RRS_ED2WK, high_RRS_2WK6M, high_RRS_ED6M, low_RRS_ED2WK, low_RRS_2WK6M, low_RRS_ED6M)
+
+
+
+interval_DEG_count <- all_results_2wk %>%
+    group_by(Comparison, Group) %>%
+    summarize(Count_DEGS_FDR_0.05 = sum(adj.P.Val < 0.05, na.rm = TRUE),
+              Count_DEGS_FDR_0.01 = sum(adj.P.Val < 0.01, na.rm = TRUE),
+              Count_DEGS_FDR_0.001 = sum(adj.P.Val < 0.001, na.rm = TRUE),
+              .groups = 'drop') %>%
+    arrange(Comparison, Group)
+
+write.csv(interval_DEG_count, "2WK Analyses/Differential Expression Analyses/Summaries/DEG Counts Across Intervals and RRS Groupx.csv")
+
+all_results_2wk_v2 <- bind_rows(high_RRS_ED2WK, low_RRS_ED2WK, high_RRS_2WK6M, low_RRS_2WK6M, high_RRS_ED6M, low_RRS_ED6M)
+
+all_results_2wk_export <- all_results_2wk_v2 %>%
+  dplyr::select(Comparison, Group, Gene, logFC, t, B, z.std,P.Value, adj.P.Val,ED_mean, WK2_mean, M6_mean ) %>%
+  dplyr::rename(Interval = Comparison, 
+                `RRS Group` = Group, 
+                Gene = Gene, 
+                logFC = logFC, 
+                `T stat` = t, 
+                B = B, 
+                `Std Z` = z.std, 
+                `P Value` = P.Value, 
+                FDR = adj.P.Val, 
+                `Avg ED Log2CPM` = ED_mean, 
+                `Avg WK2 Log2CPM` = WK2_mean, 
+                `Avg 6M Log2CPM` = M6_mean) %>%
+  mutate(
+  Interval = case_when(
+    Interval == "ED_vs_WK2" ~ "ED vs WK2",
+    Interval == "WK2_vs_M6" ~ "WK2 vs 6M",
+    Interval == "ED_vs_M6" ~ "ED vs 6M",
+    TRUE ~ as.character(Interval)
+  ), 
+    `RRS Group` = case_when(
+    `RRS Group` == "High_RRS" ~ "High RRS",
+    `RRS Group` == "Low_RRS" ~ "Low RRS",
+    TRUE ~ as.character(`RRS Group`)
+  ),
+   Direction = case_when(
+      Interval == "ED vs WK2" & logFC > 0 ~ "Higher at WK2",
+      Interval == "ED vs WK2" & logFC < 0 ~ "Higher at ED",
+      Interval == "WK2 vs 6M" & logFC > 0 ~ "Higher at 6M",
+      Interval == "WK2 vs 6M" & logFC < 0 ~ "Higher at WK2",
+      Interval == "ED vs 6M" & logFC > 0 ~ "Higher at 6M",
+      Interval == "ED vs 6M" & logFC < 0 ~ "Higher at ED",
+      logFC == 0 ~ "No difference",
+      TRUE ~ NA_character_
+    )
+  )
+write.csv(all_results_2wk_export, "2WK Analyses/Differential Expression Analyses/Summaries/Combined ED-WK2-6M DEA Results.csv")
+
+```
+
+### Excel export 
+```{r}
+
+library(openxlsx)
+library(dplyr)
+
+format_num <- function(x, digits = 3) {
+  signif(x, digits)
+}
+dea_list <- list(
+  "High_RRS_ED_vs_WK2"  = high_RRS_ED2WK,
+  "High_RRS_WK2_vs_M6"  = high_RRS_2WK6M,
+  "High_RRS_ED_vs_M6"   = high_RRS_ED6M,
+  "Low_RRS_ED_vs_WK2"   = low_RRS_ED2WK,
+  "Low_RRS_WK2_vs_M6"   = low_RRS_2WK6M,
+  "Low_RRS_ED_vs_M6"    = low_RRS_ED6M
+)
+
+DEA_wb <- createWorkbook()
+
+header_style <- createStyle(textDecoration = "bold", halign = "center", valign = "center")
+body_style   <- createStyle(halign = "center", valign = "center")
+
+for (sheet_name in names(dea_list)) {
+  
+  df_sub <- dea_list[[sheet_name]] %>%
+    mutate(
+      adjP_num = as.numeric(adj.P.Val),
+      abslogfc_num = as.numeric(Abs_logFC),
+      sig = adjP_num < 0.05
+    ) %>%
+    arrange(
+      desc(sig),
+      desc(if_else(sig, abslogfc_num, NA_real_)),
+      if_else(!sig, adjP_num, Inf)
+    ) %>%
+    dplyr::select(-adjP_num, -abslogfc_num, -sig) %>%
+    mutate(across(where(is.numeric), format_num))
+  
+  addWorksheet(DEA_wb, sheet_name)
+  writeData(DEA_wb, sheet = sheet_name, x = df_sub, withFilter = FALSE)
+  
+  addStyle(
+    DEA_wb, sheet = sheet_name, style = header_style,
+    rows = 1, cols = 1:ncol(df_sub), gridExpand = TRUE
+  )
+  
+  addStyle(
+    DEA_wb, sheet = sheet_name, style = body_style,
+    rows = 2:(nrow(df_sub) + 1), cols = 1:ncol(df_sub), gridExpand = TRUE
+  )
+  
+  setColWidths(DEA_wb, sheet = sheet_name, cols = 1:ncol(df_sub), widths = 18)
+}
+
+saveWorkbook(
+  DEA_wb,
+  "2WK Analyses/Differential Expression Analyses/Summaries/DEA_Results_ED2WK6M_GlobalNorm.xlsx",
+  overwrite = TRUE
+)
+
+```
+
+
+
+## Volcano plots 
+
+### prep
+```{r}
+library(tidyverse)
+
+#----------------------------
+# Add labels to each result table
+#----------------------------
+high_RRS_ED2WK <- high_RRS_ED2WK %>%
+  mutate(
+    Interval = "ED \u2192 2WK",
+    RRS_group = "High RRS"
+  )
+
+low_RRS_ED2WK <- low_RRS_ED2WK %>%
+  mutate(
+    Interval = "ED \u2192 2WK",
+    RRS_group = "Low RRS"
+  )
+
+high_RRS_2WK6M <- high_RRS_2WK6M %>%
+  mutate(
+    Interval = "2WK \u2192 6M",
+    RRS_group = "High RRS"
+  )
+
+low_RRS_2WK6M <- low_RRS_2WK6M %>%
+  mutate(
+    Interval = "2WK \u2192 6M",
+    RRS_group = "Low RRS")
+
+# ED → 6M  (NEW)
+high_RRS_ED6M <- high_RRS_ED6M %>%
+  mutate(Interval = "ED \u2192 6M", RRS_group = "High RRS")
+
+low_RRS_ED6M <- low_RRS_ED6M %>%
+  mutate(Interval = "ED \u2192 6M", RRS_group = "Low RRS")
+```
+
+### Figure 6b
+```{r}
+volcano_df <- bind_rows(
+  high_RRS_ED2WK, low_RRS_ED2WK,
+  high_RRS_2WK6M, low_RRS_2WK6M) %>%
+  #high_RRS_ED6M,  low_RRS_ED6M) %>%
+  mutate(
+    neg_log10_FDR = -log10(adj.P.Val),
+    neg_log10_FDR = ifelse(is.infinite(neg_log10_FDR), NA_real_, neg_log10_FDR),
+    sig = adj.P.Val < 0.05,
+    Interval = factor(Interval, levels = c("ED \u2192 2WK", "2WK \u2192 6M", "ED \u2192 6M")),
+    RRS_group = factor(RRS_group, levels = c("Low RRS", "High RRS")))
+
+volcano_plot <- ggplot(volcano_df, aes(x = logFC, y = neg_log10_FDR, color = RRS_group)) +
+  geom_point(alpha = 0.05, size = 1.5) +
+  geom_point(data = volcano_df %>% filter(sig), alpha = 1, size = 1.5) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", linewidth = 0.8, color = "black") +
+  facet_wrap(~ Interval, nrow = 1) +
+  scale_color_manual(values = c("High RRS" = "#2A93B5", "Low RRS" = "#8D1946")) +
+  labs(x = expression(log[2]~fold~change), y = expression(-log[10]~FDR), color = NULL) +
+  theme_bw(base_size = 24) +
+  scale_x_continuous(breaks = c(-1, 0, 1), labels = c("-1", "0", "1")) +
+  guides(color = guide_legend(override.aes = list(size = 4, alpha = 0.8))) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(size = 14, face = "plain"),
+    axis.title = element_text(size = 16),
+    axis.text.x = element_text(size = 14, color = "black"),
+    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
+    legend.text = element_text(size = 14),
+    legend.position = "none",
+    legend.margin = margin(t = -12),
+    legend.box.margin = margin(t = -12),
+    panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8), 
+    axis.ticks.length = unit(0, "pt"))
+
+volcano_plot
+
+ggsave(volcano_plot, filename = "volcano_plot_for_methods_v2.jpg", width = 5, height = 3, dpi = 300)
+```
+
+
+

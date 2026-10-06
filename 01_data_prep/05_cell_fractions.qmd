@@ -1,0 +1,167 @@
+---
+title: "Cell Fraction (CIBERSORTx) Data Preparation"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 574-715 ---- -->
+
+# CELL FRACTIONS (ED, 2WK, M6)
+Cibersort cell fraction estimates were calculated by Ying. 
+
+## Data prep 
+```{r}
+# load CIBERSORT.x (relative mode) 
+cibersort_data <- read_csv("Data/Cibersort_relativeMode_v47_data.csv", show_col_types = FALSE)
+
+# identify cell-type columns (everything except these known non-cell columns)
+non_cell_cols <- c("Mixture", "P-value", "Correlation", "RMSE")
+cell_cols <- setdiff(names(cibersort_data), non_cell_cols)
+length(cell_cols) # 22 cells were tested 
+# "B cells naive", "B cells memory", "Plasma cells", "T cells CD8", "T cells CD4 naive", "T cells CD4 memory resting", 
+# "T cells CD4 memory activated", "T cells follicular helper", "T cells regulatory (Tregs)", "T cells gamma delta", "NK cells resting", "NK cells activated", "Monocytes", "Macrophages M0", "Macrophages M1", "Macrophages M2", "Dendritic cells resting", "Dendritic cells activated", "Mast cells resting", "Mast cells activated", "Eosinophils", "Neutrophils"      
+
+# keep only cell types with non-zero median
+cell_medians <- cibersort_data %>%
+  summarise(across(all_of(cell_cols), ~ median(.x, na.rm = TRUE))) %>%
+  pivot_longer(everything(), names_to = "Cell_Type", values_to = "Median")
+
+
+cells_to_keep <- cell_medians %>%
+  filter(Median > 0) %>%
+  arrange(desc(Median)) %>%
+  pull(Cell_Type)
+# "Neutrophils","T cells CD8","T cells CD4 naive","NK cells resting", "B cells naive", "T cells regulatory (Tregs)", 
+# "T cells CD4 memory resting", "Mast cells resting", "Monocytes", "NK cells activated", "B cells memory",           
+# "Macrophages M2", "Plasma cells", "Dendritic cells activated"
+# There are 14 cells 
+
+# cells that were dropped (median == 0)
+cells_dropped <- setdiff(cell_cols, cells_to_keep)
+# "T cells CD4 memory activated", "T cells follicular helper", "T cells gamma delta"         
+# "Macrophages M0", "Macrophages M1", "Dendritic cells resting", "Mast cells activated", "Eosinophils"      
+
+# subset to the cells we’re keeping (and keep Mixture + QC cols for later)
+cibersort_data_filtered <- cibersort_data %>%
+  dplyr::select(Mixture, all_of(cells_to_keep), `P-value`, Correlation, RMSE)
+```
+
+## Data for analysis
+```{r}
+
+# Arcsine square-root transform (ASIN) on proportions
+# ensure values between [0,1] just in case, then asin(sqrt(p))
+cibersort_data_filtered_asin <- cibersort_data_filtered %>%
+  mutate(across(all_of(cells_to_keep),
+                ~ asin(sqrt(pmin(pmax(.x, 0), 1))),
+                .names = "asin_{.col}")) %>%
+  dplyr::rename(INVENTORY.CODE = Mixture)
+
+# merge with ED-M6 metadata 
+metadata_cibersort <- Metadata_Analysis_RNA_paired %>%
+  inner_join(cibersort_data_filtered_asin, by = "INVENTORY.CODE")
+dim(metadata_cibersort) # 530, 105
+
+metadata_cibersort_wide_raw <- Metadata_Analysis_RNA_paired %>%
+  inner_join(cibersort_data_filtered, by = c("INVENTORY.CODE" = "Mixture")) %>%
+  mutate(Data = "Raw") %>%
+  dplyr::select(PID, INVENTORY.CODE, Timepoint,Data,  all_of(cells_to_keep))
+
+
+# long format of arcsin-transformed values (one row per sample x cell)
+asin_cols <- paste0("asin_", cells_to_keep)
+
+metadata_cibersort_long <- metadata_cibersort %>%
+  pivot_longer(
+    cols = all_of(asin_cols),
+    names_to = "CellType",
+    names_prefix = "asin_",
+    values_to = "Proportion_Asin")
+
+# analysis matrix (wide) with only arcsin cells 
+metadata_cibersort_wide_asin <- metadata_cibersort %>%
+    mutate(Data = "Asin") %>%
+  dplyr::select(PID, INVENTORY.CODE, Timepoint, Data, all_of(asin_cols)) %>%
+  rename_with(~ sub("^asin_", "", .x), all_of(asin_cols))
+
+dim(metadata_cibersort_wide_asin) # 530  18
+
+metadata_cibersort_wide_asin_ED6M_490 <- metadata_cibersort_wide_asin %>% 
+  filter(INVENTORY.CODE %in% ICs_490_ED6M)
+
+dim(metadata_cibersort_wide_asin_ED6M_490) # 490  18
+
+write.csv(metadata_cibersort_wide_asin_ED6M_490, "Data/Cibersort Data/Analysis Data/Cibersort_Arcsin_Estimated_Cell_Fractions_ED6M_490_3-23-2026.csv")
+
+metadata_cibersort_wide_asin_ED2WK6M_120 <- metadata_cibersort_wide_asin %>% 
+  filter(INVENTORY.CODE %in% ICs_120_ED2WK6M)
+
+dim(metadata_cibersort_wide_asin_ED2WK6M_120) # 120  18
+
+write.csv(metadata_cibersort_wide_asin_ED2WK6M_120, "Data/Cibersort Data/Analysis Data/Cibersort_Arcsin_Estimated_Cell_Fractions_ED2WK6M_120_3-23-2026.csv")
+
+```
+
+## Normality 
+```{r}
+summarize_wide_cells <- function(df, vars) {
+  df %>%
+    summarise(
+      across(
+        all_of(vars),
+        list(
+          N = ~ sum(is.finite(.x)),
+          Mean = ~ mean(.x, na.rm = TRUE),
+          Median = ~ median(.x, na.rm = TRUE),
+          SD = ~ sd(.x, na.rm = TRUE),
+          Skewness = ~ e1071::skewness(.x, na.rm = TRUE, type = 2),
+          Kurtosis = ~ e1071::kurtosis(.x, na.rm = TRUE, type = 2)),
+        .names = "{.col}::{.fn}")) %>%
+    pivot_longer(
+      everything(),
+      names_to = c("CellType", ".value"),
+      names_sep = "::") %>%
+    relocate(CellType)
+}
+
+cell_stats_raw <- metadata_cibersort_wide_raw %>%
+  dplyr::select(all_of(cells_to_keep)) %>%
+  summarize_wide_cells(vars = cells_to_keep) %>%
+  mutate(Scale = "Raw") %>%
+  relocate(Scale, .after = CellType)
+
+cell_stats_asin <- metadata_cibersort_wide_asin %>%
+  dplyr::select(all_of(cells_to_keep)) %>%
+  summarize_wide_cells(vars = cells_to_keep) %>%
+  mutate(Scale = "Asin") %>%
+  relocate(Scale, .after = CellType)
+
+cell_stats_compare <- bind_rows(
+  cell_stats_raw,
+  cell_stats_asin) %>%
+  mutate(Scale = factor(Scale, levels = c("Raw", "Asin"))) %>%
+  arrange(CellType, Scale)
+
+
+write.csv(cell_stats_compare, "Data/Cibersort Data/Analysis Data/Cibersort_Estimated_Cell_Fractions_Stat_Summary_3-23-2026.csv")
+
+```
+
+
+

@@ -1,0 +1,157 @@
+---
+title: "RNA-seq Data Loading and Cohort Determination"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 32-163 ---- -->
+
+# RNA DATA
+Raw GENCODE v47 RNA-seq count and log2-transformed matrices are imported and used to define the 890 sequenced samples. Batch 1 and Batch 2 RNA manifests are harmonized, combined, and restricted to inventory codes present in the RNA-seq matrices, reflecting samples retained after RNA-seq quality control. Timepoint codes (T0–T3) are recoded to ED, 2-week (2WK), and 6-month (M6) labels, and participant-level sets with RNA-seq data at each visit (ED, 2WK, M6) are derived from the unified manifest.
+
+## Data prep
+```{r}
+# load in RNA counts 
+AURORA_RNA_Seq_V47_counts <- read_csv("Data/RNA Data/Data Files/AURORA_RNA_Seq_V47_counts.csv", show_col_types = FALSE)
+dim(AURORA_RNA_Seq_V47_counts) # 890 19906
+range(AURORA_RNA_Seq_V47_counts[, 3:ncol(AURORA_RNA_Seq_V47_counts)]) # 0 663281
+
+# load in log2 transformed RNA seq 
+AURORA_RNA_Seq_V47_log2   <- read_csv("Data/RNA Data/Data Files/AURORA_RNA_Seq_V47_log2.csv",   show_col_types = FALSE)
+dim(AURORA_RNA_Seq_V47_log2) # 890 19906
+range(AURORA_RNA_Seq_V47_log2[, 3:ncol(AURORA_RNA_Seq_V47_log2)]) # 0.00000 19.33926
+
+# pull out the unique inventory codes from RNA counts 
+RNA_inventory_codes <- AURORA_RNA_Seq_V47_counts$INVENTORY.CODE %>% unique()
+length(RNA_inventory_codes) # 890 RNA samples 
+
+RNA_manifest_batch1 <- read_csv("Data/RNA Data/Data Files/AURORA_RNA_Expression_Manifest_Batch1.csv", show_col_types = FALSE) %>%
+  mutate(Batch = 1) %>%
+  dplyr::rename(INVENTORY.CODE = `INVENTORY CODE`, ALT.ID = `ALT ID`)
+dim(RNA_manifest_batch1) # 600 RNA samples, 6 columns 
+  
+RNA_manifest_batch2 <- read_csv("Data/RNA Data/Data Files/AURORA_RNA_Expression_Manifest_Batch2.csv", show_col_types = FALSE) %>%
+  mutate(Batch = 2) %>%
+  dplyr::rename(INVENTORY.CODE = External_Code, ALT.ID = `ALT ID`)
+dim(RNA_manifest_batch2) # 382 RNA samples, 11 columns 
+
+# 600 + 382 = 982 ... this is how many RNA samples there were before the RNA seq data was cleaned/filtered. After cleaning there were only 890 samples left (what we see in the RNA-seq matrices)
+
+RNA_manifest <- bind_rows(
+  RNA_manifest_batch1 %>% dplyr::select(PID, INVENTORY.CODE, ALT.ID, Batch),
+  RNA_manifest_batch2 %>% dplyr::select(PID, INVENTORY.CODE, ALT.ID, Batch)) %>%
+  filter(INVENTORY.CODE %in% RNA_inventory_codes) %>%
+  mutate(
+  ALT.ID = case_when(
+  ALT.ID == "T0" ~ "ED",
+  ALT.ID == "T1" ~ "WK2",
+  ALT.ID %in% c("T2", "T3") ~ "M6",
+  TRUE ~ ALT.ID),
+  Timepoint = factor(ALT.ID, levels = c("ED", "WK2", "M6"))) %>%
+  dplyr::select(PID, INVENTORY.CODE, Timepoint, Batch) %>%
+   mutate(PID = as.character(PID))
+
+
+dim(RNA_manifest) #890 x 4 
+
+RNA_pids <- RNA_manifest %>% pull(PID) %>% unique()
+length(RNA_pids) # 507 participants with samples 
+
+ED_pids  <- RNA_manifest %>% filter(Timepoint == "ED")  %>% 
+  pull(PID) %>%   
+  unique()
+
+WK2_pids <- RNA_manifest %>% filter(Timepoint == "WK2") %>% 
+  pull(PID) %>% 
+  unique()
+
+M6_pids  <- RNA_manifest %>% filter(Timepoint == "M6")  %>% 
+  pull(PID) %>% 
+  unique()
+
+length(ED_pids) # 419 participants with ED samples 
+length(WK2_pids) # 141 participants with 2WK samples 
+length(M6_pids) # 330 participants with M6 samples 
+
+AURORA_RNA_Seq_V47_counts_clean <- AURORA_RNA_Seq_V47_counts %>%
+  left_join(RNA_manifest[, 1:2], by = "INVENTORY.CODE") %>%
+  dplyr::select(-...1) %>%
+  dplyr::select(INVENTORY.CODE, PID, everything())
+
+dim(AURORA_RNA_Seq_V47_counts_clean) # 890 x 19906
+
+AURORA_RNA_Seq_V47_log2_clean <- AURORA_RNA_Seq_V47_log2 %>%
+  dplyr::rename(INVENTORY.CODE = X) %>%
+  dplyr::select(-...1) %>%
+  left_join(RNA_manifest[, 1:2], by = "INVENTORY.CODE") %>%
+  dplyr::select(INVENTORY.CODE, PID, everything())
+
+dim(AURORA_RNA_Seq_V47_log2_clean) # 890 x 19906
+
+```
+
+## Determine ED–M6 and ED–2WK–M6 RNA-seq cohorts
+RNA-seq timepoint availability is summarized per participant, and PID sets are defined for those with paired ED–M6 data and those with complete ED–2WK–M6 coverage.
+```{r}
+# wide manifest: each PID gets one row with ED/WK2/M6 inventory codes
+RNA_manifest_wide <- RNA_manifest %>%
+  dplyr::select(PID, INVENTORY.CODE, Timepoint) %>%
+  pivot_wider(
+    names_from  = Timepoint,
+    values_from = INVENTORY.CODE,
+    names_prefix = "InvCode_")
+
+# per-timepoint flags for presence of each RNA-seq timepoint
+timepoints_flags <- RNA_manifest %>%
+group_by(PID) %>%
+summarize(
+has_ED  = any(Timepoint == "ED"),
+has_WK2 = any(Timepoint == "WK2"),
+has_M6  = any(Timepoint == "M6"),
+.groups = "drop")
+
+# PIDs paired ED and M6 samples 
+ED_M6_paired_PIDs <- timepoints_flags %>%
+filter(has_ED & has_M6) %>%
+pull(PID)
+
+ED_M6_inventory_codes <- RNA_manifest_wide %>%
+  filter(PID %in% ED_M6_paired_PIDs) %>%
+  dplyr::select(InvCode_ED, InvCode_M6) %>%
+  unlist(use.names = FALSE)
+
+length(ED_M6_paired_PIDs)  # 253 participants with paired ED and M6 RNA-seq
+length(ED_M6_inventory_codes) # 506 paired samples 
+
+# PIDs with ED, 2WK, and M6 RNA samples
+ED_WK2_M6_paired_PIDs <- timepoints_flags %>%
+filter(has_ED & has_WK2 & has_M6) %>%
+pull(PID)
+
+ED_WK2_M6_inventory_codes <- RNA_manifest_wide %>%
+  filter(PID %in% ED_WK2_M6_paired_PIDs) %>%
+  dplyr::select(InvCode_ED, InvCode_M6) %>%
+  unlist(use.names = FALSE)
+
+length(ED_WK2_M6_paired_PIDs)  # 44 participants with ED, 2WK, and M6 RNA-seq
+length(ED_WK2_M6_inventory_codes) # 88 paired samples 
+
+```
+
+

@@ -1,0 +1,330 @@
+---
+title: "RRS Associations with Risk/Resilience Factors"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 6248-6552 ---- -->
+
+# RRS + DEMOGRAPHICS
+
+## Analysis
+Demographic, stress/adversity, and medication predictors were harmonized and grouped into three hypothesis families. For each predictor, a univariate linear model was fit with RRS as the outcome, returning raw β estimates and two-sided P-values. Continuous variables were additionally standardized to obtain standardized β and confidence intervals. BH FDR was applied within each predictor family.
+```{r}
+full_meta <- read.csv("Data/Analysis Data/Metadata/Metadata Complete 2626.csv")
+
+full_meta_plot <- full_meta %>%
+  dplyr::select(PID, WK2_Stress_MAX, WK8_Stress_MAX, M3_Stress_MAX, 
+                WK2_PROM_Pain4a_T, WK8_PROM_Pain4a_T, M3_PROM_Pain4a_T, 
+                WK8_PSS10_Total_RS, M3_PSS10_Total_RS, M6_PSS10_Total_RS,
+                PRE_PSS10_CantCope_RS, WK8_PSS10_CantCope_RS, M3_PSS10_CantCope_RS, M6_PSS10_CantCope_RS,
+                PRE_PSS10_Distress_RS, WK8_PSS10_Distress_RS, M3_PSS10_Distress_RS, M6_PSS10_Distress_RS,
+                WK2_Pain, WK8_Pain, M3_Pain, M6_Pain) %>%
+  mutate(PID = as.character(PID)) %>%
+  left_join(meta_RRS_df, by = "PID")
+
+metadata_demo <- meta_RRS_df %>%
+  mutate(
+    Gender = factor(Gender, levels = c("Male","Female")),  
+    Race   = factor(Race, levels = c("White","Black","Other")),
+    Education = factor(Education, levels = c("College graduate", "Less than college", 
+                                             "High school graduate","Less than high school")),
+    PRE_NSAIDs = factor(PRE_NSAIDs, levels = c("No","Yes")),
+    ED_NSAIDs = factor(ED_NSAIDs, levels = c("No","Yes")),
+    EDhm_NSAIDs = factor(EDhm_NSAIDs, levels = c("No","Yes")),
+    PRE_Opioids = factor(PRE_Opioids, levels = c("No","Yes")),
+    ED_Opioids  = factor(ED_Opioids, levels = c("No","Yes")),
+    EDhm_Opioids = factor(EDhm_Opioids, levels = c("No","Yes")),
+    PRE_SNRIs_SSRIs = factor(PRE_SNRIs_SSRIs, levels = c("No","Yes")),
+    PRE_Contcp = factor(PRE_Contcp, levels = c("No","Yes")))
+
+
+# demographics variables
+vars_demographics <- c("Age", "Gender", "Race", "BMI", "ED_Pain","PDI", "ADI")
+
+# "WK2_BFI_Neuro_MN", "WK2_TIPI_Extraversion_MN", "WK2_TIPI_Agreeable_MN", "WK2_TIPI_Conscientious_MN", "WK2_TIPI_OpenExper_MN"
+
+# stress/adversity 
+vars_stress <- c("PRE_SF12_PCS","CTQSF","LifeTimeEvent_count","PRE_SF12_MCS","PRE_PSS10_Total_RS","PRE_PROM_Pain4a_T","PRE_PROM_Dep8b_T","PRE_PROM_AnxBank_RS","WK2_PROM_SelfEffEmo4a_T","WK2_CDRISC10_RS", "WK2_PROM_EmoSup4a_RS", "WK2_TIPI_EmoStability_MN")
+
+# medication use 
+vars_medications <- c("PRE_NSAIDs", "ED_NSAIDs", "PRE_SNRIs_SSRIs", "PRE_Contcp", "PRE_Opioids", "ED_Opioids")
+
+all_variables <- list(Demographics = vars_demographics, Stress = vars_stress, Medications  = vars_medications)
+
+# run regression for each variable in the respective list 
+run_regression <- function(var, data) {
+  df <- data %>%
+    dplyr::select(RRS, !!sym(var)) %>%
+    filter(complete.cases(.))
+
+  # determine variable type
+  is_cat <- is.factor(df[[var]]) || is.character(df[[var]])
+  if (is_cat) df[[var]] <- factor(df[[var]])
+
+  # raw model
+  m <- lm(RRS ~ ., data = df)
+  sm <- summary(m)
+  coefs <- as.data.frame(sm$coefficients)
+  coefs$Term <- rownames(coefs)
+
+  # standardized model (only if continuous)
+  if (!is_cat && sd(df[[var]]) > 0) {
+    df$y_std <- scale(df$RRS)
+    df$x_std <- scale(df[[var]])
+    sm_std <- summary(lm(y_std ~ x_std, data = df))
+    std_beta <- sm_std$coefficients["x_std", "Estimate"]
+    std_se   <- sm_std$coefficients["x_std", "Std. Error"]
+  } else {
+    std_beta <- std_se <- NA_real_
+  }
+
+  # assemble tidy results
+  coefs %>%
+    filter(Term != "(Intercept)") %>%
+    mutate(
+      Variable = var,
+      Sample_Size = nrow(df),
+      R_squared = sm$r.squared,
+      Std_Coefficient = std_beta,
+      Std_SE = std_se,
+      CI_lower = Estimate - 1.96 * `Std. Error`,
+      CI_upper = Estimate + 1.96 * `Std. Error`,
+      Std_CI_lower = Std_Coefficient - 1.96 * Std_SE,
+      Std_CI_upper = Std_Coefficient + 1.96 * Std_SE,
+      Type = ifelse(is_cat, "Categorical", "Continuous")) %>%
+    dplyr::rename(
+      Coefficient = Estimate,
+      Std_Error = `Std. Error`,
+      T_value = `t value`,
+      P_value = `Pr(>|t|)`)
+}
+
+# loop through each list 
+regression_results_df <- imap_dfr(all_variables, function(vars, var_class) {
+  message("Running domain: ", var_class)
+  results <- map_dfr(vars, run_regression, data = metadata_demo)
+  results$var_class <- var_class
+  results
+})
+
+regression_results_df <- regression_results_df %>%
+  group_by(var_class) %>%
+  mutate(
+    FDR = p.adjust(P_value, method = "fdr"),
+    Significance = if_else(FDR < 0.05, "Significant", "NS")) %>%
+  ungroup() %>%
+  arrange(FDR)
+
+#write.csv(regression_results_df, "RRS Correlates/Survey Variables Linear Regression Results_Support_20260820.csv")
+
+```
+
+## Results
+Univariable linear models of RRS on each demographic, stress/adversity, and medication predictor were summarized into a single results table. Predictors were classified as continuous vs categorical, assigned to Baseline, Stress/Adversity, or Medications families, and FDR-adjusted within family. For visualization, raw β and CIs were retained for categorical predictors, and standardized β and CIs were used for continuous predictors.
+```{r}
+cat_terms <- c("RaceBlack","RaceOther","GenderFemale",
+               "PRE_NSAIDsYes","ED_NSAIDsYes","EDhm_NSAIDsYes","PRE_OpioidsYes",
+               "ED_OpioidsYes","PRE_SNRIs_SSRIsYes","PRE_ContcpYes")
+
+baseline_terms <- c("Age","GenderFemale","RaceBlack","RaceOther","BMI", "ED_Pain", "PDI", "ADI")
+
+medication_terms <- c("PRE_NSAIDsYes","ED_NSAIDsYes","PRE_OpioidsYes","ED_OpioidsYes", 
+                      "PRE_ContcpYes","PRE_SNRIs_SSRIsYes")
+
+stress_terms <- c("CTQSF","LifeTimeEvent_count","PRE_SF12_MCS","PRE_PCL5_RS",
+                  "ED_MCEPS_RS","PRE_PSS10_Total_RS","PRE_PROM_Pain4a_T","PRE_PROM_Dep8b_T",
+                  "PRE_PROM_AnxBank_RS","WK2_PROM_SelfEffEmo4a_T","WK2_PROM_EmoSup4a_RS",
+                  "WK2_TIPI_EmoStability_MN","WK2_CDRISC10_RS","WK2_FFMQ_RS","M6_FFMQ_RS","PRE_DESB_RS",
+                  "WK2_DESB_RS", "PRE_SF12_PCS", "PRE_Pain")
+
+regression_results_df <- regression_results_df %>%
+  mutate(
+    # categorical vs continuous
+    Type = ifelse(Term %in% cat_terms, "Categorical", "Continuous"),
+    # conceptual categories
+    Category = case_when(
+      Term %in% baseline_terms ~ "Physical Health/Demographics",
+      Term %in% medication_terms ~ "Medications",
+      Term %in% stress_terms ~ "Mental Health/Stress/Adversity",
+      TRUE ~ "Other"),
+
+    # FDR significance
+    Significance = ifelse(FDR < 0.05, "Significant", "Not Significant"),
+
+    # unified effect size for plotting
+    Plot_Coefficient = ifelse(Type == "Categorical", Coefficient, Std_Coefficient),
+    Plot_CI_lower = ifelse(Type == "Categorical", CI_lower,Std_CI_lower),
+    Plot_CI_upper = ifelse(Type == "Categorical", CI_upper, Std_CI_upper))
+```
+
+## Forest plot 
+Effect estimates were visualized using a forest plot stratified by predictor family. Continuous predictors are shown as standardized β, categorical predictors as raw β, each with 95% confidence intervals. Variables are ordered by FDR and effect size within family, and point color encodes whether higher values are associated with higher RRS (Recovered↑), lower RRS (Chronic↓), or non-significant differences.
+```{r}
+
+clean_vars <- c(
+  Age = "Age",
+  ADI = "Area Deprivation Index",
+  BMI = "BMI",
+  PRE_SF12_PCS= "Overall Physical Health",
+  PRE_SF12_MCS = "Overall Mental Health ",
+  PRE_Pain = "Pain Prior to TSE",
+  ED_Pain = "Pain at ED",
+
+  CTQSF = "Childhood Trauma History",
+  PRE_PSS10_Total_RS  = "Perceived Amount of Stress",
+  PDI = "Peritraumatic Distress",
+  LifeTimeEvent_count = "# of Lifetime TSEs",
+  #PRE_PCL5_RS = "PTSD Prior to TSE(↑ = more)",
+  PRE_PROM_Pain4a_T = "Pain Interference",
+  PRE_PROM_Dep8b_T  = "Depression Severity",
+  PRE_PROM_AnxBank_RS  = "Anxiety Severity",
+
+  WK2_CDRISC10_RS = "Psychological Resilience",
+  WK2_PROM_SelfEffEmo4a_T = "Emotional Coping Capacity",
+  WK2_PROM_EmoSup4a_RS = "Relational Support",
+  WK2_TIPI_EmoStability_MN = "Emotional Stability",
+
+
+  GenderFemale = "Female (vs Male)",
+  RaceBlack = "Race: Black (vs White)",
+  RaceOther = "Race: Other (vs White)",
+
+  PRE_NSAIDsYes = "NSAIDs Prior to TSE (Yes vs No)",
+  ED_NSAIDsYes = "NSAIDs in ED (Yes vs No)",
+  #EDhm_NSAIDsYes = "NSAIDs Discharged (Yes vs No)",
+  PRE_OpioidsYes = "Opioids Prior to TSE (Yes vs No)",
+  ED_OpioidsYes = "Opioids in ED (Yes vs No)",
+  PRE_ContcpYes  = "Contraceptive Use Prior to TSE (Yes vs No)",
+  PRE_SNRIs_SSRIsYes = "SNRI/SSRI Prior to TSE (Yes vs No)")
+
+
+vars_present    <- unique(regression_results_df$Term)
+
+# build df for plotting
+regression_results_df_plot <- regression_results_df %>%
+  mutate(
+    Category = case_when(
+      Term %in% baseline_terms ~ "Physical Health/Demographics",
+      Term %in% stress_terms ~ "Mental Health/Stress/Adversity",
+      Term %in% medication_terms  ~ "Medications",
+      TRUE  ~ "Other"),
+
+    # labels
+    Display = dplyr::coalesce(
+      unname(clean_vars[Term]),
+      unname(clean_vars[Variable]),
+      Term),
+
+    Sig = factor(ifelse(FDR < 0.05, "sig", "nonsig"),
+                 levels = c("nonsig", "sig")),
+
+    # coefficient selection
+    Plot_Coefficient = ifelse(Type == "Categorical", Coefficient, Std_Coefficient),
+
+    # CI selection 
+    Plot_CI_lower = ifelse(Type == "Categorical", CI_lower, Std_CI_lower),
+    Plot_CI_upper = ifelse(Type == "Categorical", CI_upper, Std_CI_upper)) %>%
+  
+  group_by(Category) %>%
+  arrange(FDR,desc(abs(Plot_Coefficient)), .by_group = TRUE) %>%
+  mutate(Display = factor(Display, levels = rev(unique(Display)))) %>%
+  ungroup() %>%
+  mutate(Category = factor(Category, levels = c("Physical Health/Demographics", "Mental Health/Stress/Adversity", "Medications"), labels = c("Baseline &\n Demographics", "Health & Life History\nPrior to the TSE", "Medication Use")),
+    Direction = case_when(
+      FDR < 0.05 & Plot_Coefficient > 0 ~ "Recovered ↑",
+      FDR < 0.05 & Plot_Coefficient < 0 ~ "Chronic ↓",
+      TRUE  ~ "NS"),
+    Direction = factor(Direction, levels = c("Recovered ↑", "Chronic ↓", "NS")))
+
+
+
+regression_results_df_export <- regression_results_df_plot %>%
+  dplyr::select(Display, P_value, FDR, Coefficient, T_value, Std_Error, 
+                R_squared, Std_Coefficient, Std_SE, CI_lower, CI_upper, 
+                Std_CI_lower, Std_CI_upper, Type, Category, Sample_Size) %>%
+  dplyr::rename(
+    `Variable`= Display,
+    `P value` = P_value,
+    `FDR` = FDR,
+    `Coefficient` = Coefficient,
+    `t value` = T_value,
+    `Standard error` = Std_Error,
+    `R squared` = R_squared,
+    `Standardized coefficient` = Std_Coefficient,
+    `Standardized SE` = Std_SE,
+    `CI lower` = CI_lower,
+    `CI upper` = CI_upper,
+    `Std CI lower` = Std_CI_lower,
+    `Std CI upper` = Std_CI_upper, 
+    `Sample Size` = Sample_Size) %>%
+  mutate(across(where(is.numeric), ~ format_num(.x)))
+
+regression_results_df_export <- regression_results_df_export %>%
+  mutate(across(where(is.factor),
+    ~ factor(gsub("[↑]", "higher", as.character(.x))))) %>%
+  mutate(across(where(is.character),
+    ~ gsub("[↑]", "higher", .x))) %>%
+  arrange(FDR)
+
+write.csv(regression_results_df_export, "RRS Correlates/Survey Variables Linear Regression Results 20260903.csv")
+
+#range(regression_results_df_plot$CI_lower, na.rm = TRUE) 
+# -0.84173956  0.01316873
+
+#range(regression_results_df_plot$Std_CI_lower, na.rm = TRUE)
+# -0.3450575  0.1079668
+
+#range(regression_results_df_plot$Std_CI_upper, na.rm = TRUE)
+# -0.09884626  0.35876257
+
+
+regression_results_df_plot1 <- regression_results_df_plot %>% filter(var_class != "Medications")
+# plot 
+demographics_forest <- ggplot(
+  regression_results_df_plot1,
+  aes(x = Plot_Coefficient, y = Display, shape = Type, color = Direction)) +
+  geom_errorbarh(aes(xmin = Plot_CI_lower, xmax = Plot_CI_upper), height = 0.45,  linewidth = 1.2) +
+  geom_point(size = 5) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  facet_grid(Category ~ ., scales = "free_y", space  = "free", switch = "y") +
+  scale_alpha_manual(values = c("nonsig" = 0.7, "sig" = 1), guide  = "none") +
+  scale_shape_manual(values = c("Continuous" = 16, "Categorical" = 17)) +
+  scale_x_continuous(limits = c(-0.9, 0.6), breaks = c(-0.5, 0, 0.5)) +
+  scale_color_manual(values = c(
+    "Recovered ↑" = "#2698B1",
+    "Chronic ↓" = "#2698B1",
+    "NS" = "grey30")) +
+  labs(x = "Effect size (β)", y = NULL) +
+  theme_minimal() +
+  theme(
+    strip.placement = "none",
+    strip.text.y.left = element_text(size = 12.5, face = "bold"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    axis.title.x = element_text(size = 12, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    legend.position = "none")
+
+ggsave(demographics_forest, filename = "Figures/Survey Variables RRS Regression Forest Plot v2.jpg", width = 5.5, height = 6, dpi = 300)
+
+
+```
+
+

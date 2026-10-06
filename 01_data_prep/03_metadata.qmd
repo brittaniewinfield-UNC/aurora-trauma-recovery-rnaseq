@@ -1,0 +1,332 @@
+---
+title: "Metadata Loading, Merging, and Cleaning"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Resolve paths relative to the project's DATA root (one level above this
+# repo), where Data/ and the various analysis-output folders already live
+# locally. These folders are NOT part of this git repository (see README) --
+# they stay local / go to Dataverse, never to GitHub.
+knitr::opts_knit$set(root.dir = dirname(here::here()))
+```
+
+<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+
+<!-- ---- original lines 164-470 ---- -->
+
+# METADATA 
+Freeze 3 survey and clinical modules are imported and merged into a single metadata table for ED–M6 RNA participants. The medication module is excluded from this join because of its long format and is handled as a separate dataset.
+
+## Load and Merge modules 
+```{r}
+module_files <- c(
+  "AURORA_Freeze_3_dissociation_mod.csv",
+  "AURORA_Freeze_3_support_mod.csv",
+  "AURORA_Freeze_3_Collision_mod.csv",
+  "AURORA_Freeze_3_recovery_mod.csv",
+  "AURORA_Freeze_3_ffmq_mod.csv",
+  "AURORA_Freeze_3_trauma_mod.csv",
+  "AURORA_Freeze_3_general_mod.csv",
+  "AURORA_Freeze_3_hsu_mod.csv",
+  "AURORA_Freeze_3_su_mod.csv",
+  "AURORA_Freeze_3_sleep_mod.csv",
+  "AURORA_Freeze_3_pain_mod.csv",
+  "AURORA_Freeze_3_somatic_mod.csv",
+  "AURORA_Freeze_3_gen_health_mod.csv",
+  "AURORA_Freeze_3_impulsivebehavior_mod.csv",
+  "AURORA_Freeze_3_depression_mod.csv",
+  "AURORA_Freeze_3_pss_mod.csv",
+  "AURORA_Freeze_3_personality_mod.csv",
+  "AURORA_Freeze_3_ptsd_mod.csv",
+  "AURORA_Freeze_3_disability_mod.csv",
+  "AURORA_Freeze_3_anxiety_mod.csv",
+  "AURORA_Freeze_3_demogr_mod.csv",
+  "AURORA_Freeze_3_cdrs_mod.csv",
+  "AURORA_Freeze_3_Injury_mod_2.csv",
+  "AURORA_Freeze_3_adult_adhd_mod.csv",
+  "AURORA_Freeze_3_ctq_mod.csv",
+  "AURORA_Freeze_3_promis_see_mod.csv",
+  "AURORA_Freeze_3_cs_mod.csv",
+  "AURORA_Freeze_3_risk_mod.csv",
+  "AURORA_Freeze_3_polytrauma_mod.csv",
+  "AURORA_Freeze_3_bfi_mod.csv",
+  "AURORA_Freeze_3_finimpact_mod.csv",
+  "AURORA_Freeze_3_mceps_mod.csv",
+  "AURORA_Freeze_3_pdi_mod.csv", 
+  "AURORA_RDoC_Uni_FS_6m_Frz3_Data_V2.csv")
+
+
+bad_codes_chr <- c("", "NA", ".", "-5", "-6", "-7", "-8", "-9")
+bad_codes_num <- suppressWarnings(as.numeric(bad_codes_chr)) %>% na.omit()
+
+# load study-level sample files
+sample_v2 <- readRDS("Data/Metadata/AURORA_Freeze_3/AURORA_sample_data_v2.rds") %>%
+  dplyr::select(PID, Site_New, ED_EducationCode, ADI_NatRank, ED1_Event_BroadClass)
+
+sample_v1 <- read_csv("Data/Metadata/AURORA_Freeze_3/AURORA_sample_data_v1.csv",
+                      show_col_types = FALSE) %>%
+  dplyr::select(PID, PRE_Pain, LifeTimeEvent_count, ED_NowSomatic_NRS_SUM, M6_Somatic_NRS_SUM,PRE_Pain, WK2_Pain, WK8_Pain, M3_Pain, M6_Pain)
+
+# merge modules for ED–M6 paired RNA PIDs only
+metadata_raw <- module_files %>%
+  file.path("Data/Metadata/AURORA_Freeze_3", .) %>%
+  map(~ read_csv(.x, show_col_types = FALSE, na = bad_codes_chr)) %>%
+  purrr::reduce(full_join, by = "PID") %>%
+  left_join(sample_v2, by = "PID") %>%
+  left_join(sample_v1, by = "PID") %>%
+  tibble::as_tibble()
+
+dim(metadata_raw) #2626 (PIDs/participants), 778 metadata columns
+
+# fix the latent class namings to remove "_Class" and rename Avoidance and Hyperarousal 
+metadata_raw <- metadata_raw %>%
+  rename_with(~ gsub("_Class$", "", .x), ends_with("_Class")) %>%
+  dplyr::rename(
+    Avoidance = Avoid,
+    Hyperarousal = Arousal, 
+    Depression = Loss)
+
+
+metadata_raw %>%
+  #filter(PID %in% ED_M6_paired_PIDs) %>%
+  mutate(
+    ADI_NatRank = replace(ADI_NatRank, ADI_NatRank %in% c(-6, -7, -8), NA),
+    ADI_NatRank = as.numeric(ADI_NatRank)
+  ) %>%
+  summarise(
+    N = sum(!is.na(ADI_NatRank)),
+    Mean = mean(ADI_NatRank, na.rm = TRUE),
+    SD = sd(ADI_NatRank, na.rm = TRUE),
+    Min = min(ADI_NatRank, na.rm = TRUE),
+    Max = max(ADI_NatRank, na.rm = TRUE)
+  )
+
+table(metadata_raw$Site_New)
+
+table(sample_v2$SiteID)
+```
+
+
+## Medication data 
+Medication data (not sure if needed) for participants with paired ED–M6 RNA-seq were extracted and reduced to three fields: pre-ED medications, ED medications, and discharge medications. Wide module columns were reshaped into a compact format where each participant has a readable comma-separated list of medications for each timepoint.
+```{r}
+
+medication_raw <- read.csv(
+  "Data/Metadata/PID Datasets/AURORA_Freeze_3_medication_mod.csv",
+  check.names = FALSE) %>%
+  filter(PID %in% ED_M6_paired_PIDs) %>%
+  dplyr::select(PID,
+  matches("^PRE_MED_[0-9]+$"),
+  matches("^ED_Meds2_[0-9]+$"),
+  matches("^ED_Meds3_[0-9]+$"))
+
+# convert to a easier to read dataframe 
+medication_tidy <- medication_raw %>%
+  mutate(across(where(is.character), ~ na_if(.x, ""))) %>%
+  pivot_longer(
+    cols = -PID,
+    names_to  = "var",
+    values_to = "drug") %>%
+  filter(!is.na(drug)) %>%
+  mutate(
+    timepoint = case_when(
+      str_starts(var, "PRE_MED_")   ~ "pre_meds",
+      str_starts(var, "ED_Meds2_")  ~ "ed_meds",
+      str_starts(var, "ED_Meds3_")  ~ "discharge_meds")) %>%
+  group_by(PID, timepoint) %>%
+  summarise(meds = list(unique(drug)), .groups = "drop") %>%
+  pivot_wider(
+    names_from = timepoint,
+    values_from = meds)
+
+medication_summary <- medication_tidy %>%
+  mutate(
+    pre_meds = map_chr(pre_meds, ~ paste(.x, collapse = ", ")),
+    ed_meds = map_chr(ed_meds, ~ paste(.x, collapse = ", ")),
+    discharge_meds  = map_chr(discharge_meds,  ~ paste(.x, collapse = ", "))) %>%
+    mutate(
+    across(c(pre_meds, ed_meds, discharge_meds),
+           ~ na_if(.x, "")))
+
+```
+
+## Cleaning Metadata 
+Participant-level metadata were restricted to individuals with paired ED–M6 RNA-seq and complete latent class assignments across ten APNS domains. Demographic, clinical, psychosocial, and medication variables were selected, recoded into interpretable factors (e.g., race, education, marital status, 0/1 meds → No/Yes, combined SNRI/SSRI flags), and key aliases (Age, Site, Trauma_Type, ED_Pain, CTQSF, PDI, ADI) were created for analysis. Low-frequency APNS classes were collapsed (Nightmare, MentalFatigue), and RNA inventory codes and timepoints were merged to yield a harmonized Metadata_Analysis_RNA table for downstream modeling.
+```{r}
+
+metadata_filtered <- metadata_raw %>%
+  filter(PID %in% ED_M6_paired_PIDs)
+
+
+metadata_filtered <- metadata_filtered %>%
+  filter(if_all(all_of(APNS_ordered), ~ !is.na(.x)))
+
+length(metadata_filtered$PID)  # 245  
+
+# numerical variables of interest 
+num_vars <- c(
+  "ADI_NatRank","ED_Age","BMI","WK2_CTQSF_Total_RS","ED_NowPain","ED_PDI_RS",
+  "PRE_Pain","LifeTimeEvent_count","ED_NowSomatic_NRS_SUM","PRE_SF12_PCS",
+  "PRE_SF12_MCS","ED_Stress_MAX","M6_Somatic_NRS_SUM","M6_SF12_PCS",
+  "M6_SF12_MCS","M6_Stress_MAX","M6_PROM_Pain4a_T","PRE_PROM_AnxBank_RS",
+  "PRE_SCRN_GAD_RS","PRE_PROM_Dep8b_T",
+  "WK2_PROM_SelfEffEmo4a_T","PRE_PCL5_RS","PRE_PROM_Pain4a_T","PRE_Stress_Max",
+  "PRE_PSS10_Total_RS","WK2_FFMQ_RS","M6_FFMQ_RS","WK2_CDRISC10_RS",
+  "WK2_BFI_Neuro_RS","PRE_DESB_RS","WK2_DESB_RS","ED_MCEPS_RS", "WK2_PROM_EmoSup4a_RS", "WK2_BFI_Neuro_MN", "WK2_TIPI_Extraversion_MN", "WK2_TIPI_Agreeable_MN", "WK2_TIPI_Conscientious_MN", "WK2_TIPI_EmoStability_MN", "WK2_TIPI_OpenExper_MN")
+
+# categorical variables of interest 
+cat_vars <- c(
+  "PID","Pain","Depression","Sleep","Nightmare","Avoidance","Reexperience","Anxious",
+  "Hyperarousal","MentalFatigue","Somatic","Batch","ED_GenderBirthCert",
+  "ED_EducationCode","ED_Marital","ED_RaceEthCode","ED1_Event_BroadClass",
+  "Site_New","PRE_PCL5","PRE_PROM_Dep8b","PRE_NSAIDs","ED_NSAIDs","EDhm_NSAIDs",
+  "PRE_SNRIs","PRE_SSRIs","ED_SNRIs","ED_SSRIs","EDhm_SNRIs","EDhm_SSRIs",
+  "PRE_Opioids","ED_Opioids","EDhm_Opioids","PRE_Contcp","ED_Contcp",
+  "PRE_Benzo","ED_Benzo")
+
+keep <- c("PID", num_vars, cat_vars)
+
+metadata_filtered <- metadata_filtered %>%
+  dplyr::select(any_of(keep)) %>%
+  mutate(
+    across(any_of(num_vars), ~ suppressWarnings(as.numeric(.))),
+    PID = as.character(PID))
+
+
+metadata_filtered <- metadata_filtered %>%
+  mutate(
+    # marital status 
+    Marital = case_when(
+      ED_Marital == 1 ~ "Married",
+      ED_Marital %in% c(2, 3) ~ "Divorced or Separated",
+      ED_Marital == 6 ~ "Never Married",
+      TRUE ~ NA_character_),
+
+    # race 
+    Race = case_when(
+      ED_RaceEthCode %in% c(1, 4) ~ "Other",
+      ED_RaceEthCode == 2 ~ "White",
+      ED_RaceEthCode == 3 ~ "Black",
+      TRUE ~ NA_character_),
+
+    # education 
+    Education = ED_EducationCode, 
+    
+    # gender
+    Gender = case_when(
+      ED_GenderBirthCert == 1 ~ "Male",
+      ED_GenderBirthCert == 2 ~ "Female",
+      TRUE ~ NA_character_)) %>%
+ 
+   mutate(
+    Marital = factor(Marital),
+    Race = factor(Race, levels = c("White","Black","Other")),
+    Gender = factor(Gender, levels = c("Male","Female"))) %>%
+  
+  # binary 0/1 -->  No/Yes
+  mutate(
+    across(
+      c(PRE_PCL5, PRE_PROM_Dep8b,
+        PRE_NSAIDs, ED_NSAIDs, EDhm_NSAIDs,
+        PRE_Opioids, ED_Opioids, EDhm_Opioids,
+        PRE_Contcp, ED_Contcp,
+        PRE_Benzo, ED_Benzo,
+        PRE_SNRIs, PRE_SSRIs,
+        ED_SNRIs, ED_SSRIs,
+        EDhm_SNRIs, EDhm_SSRIs),
+      ~ factor(
+          ifelse(. == 1, "Yes", ifelse(. == 0, "No", NA_character_)),
+          levels = c("No","Yes")),
+      .names = "{.col}"),
+
+    # combined SNRI/SSRI 
+    PRE_SNRIs_SSRIs = factor(
+      dplyr::case_when(
+        PRE_SNRIs == "Yes" | PRE_SSRIs == "Yes" ~ "Yes",
+        PRE_SNRIs == "No"  & PRE_SSRIs == "No"  ~ "No",
+        TRUE ~ NA_character_), levels = c("No","Yes")),
+    
+    ED_SNRIs_SSRIs = factor(
+      dplyr::case_when(
+        ED_SNRIs == "Yes" | ED_SSRIs == "Yes" ~ "Yes",
+        ED_SNRIs == "No"  & ED_SSRIs == "No"  ~ "No",
+        TRUE ~ NA_character_), levels = c("No","Yes")),
+    
+    EDhm_SNRIs_SSRIs = factor(
+      dplyr::case_when(
+        EDhm_SNRIs == "Yes" | EDhm_SSRIs == "Yes" ~ "Yes",
+        EDhm_SNRIs == "No"  & EDhm_SSRIs == "No"  ~ "No",
+        TRUE ~ NA_character_), levels = c("No","Yes")),
+
+    # aliases
+    Site = Site_New,
+    Age = ED_Age,
+    ED_Pain = ED_NowPain,
+    CTQSF = WK2_CTQSF_Total_RS,
+    PDI = ED_PDI_RS,
+    ADI = ADI_NatRank,
+    Trauma_Type = ED1_Event_BroadClass) %>%
+  
+  # drop old aliases
+  dplyr::select(-c(ADI_NatRank, ED_Age, WK2_CTQSF_Total_RS, ED_NowPain,
+       ED_PDI_RS, ED_EducationCode, ED_Marital, ED_RaceEthCode,
+       ED1_Event_BroadClass, Site_New)) %>%
+  tibble::as_tibble()
+
+# order columns 
+Metadata_Analysis <- metadata_filtered %>%
+  mutate(PID = as.character(PID)) %>%
+  dplyr::select(PID, Age, Gender, Race, BMI, Education, Marital,
+    Trauma_Type, Site, ED_Pain, CTQSF, PDI, ADI,
+    Pain, Avoidance, Reexperience, Hyperarousal, MentalFatigue,
+    Anxious, Somatic, Depression, Nightmare, Sleep,
+    dplyr::everything())
+
+# count latent class distributions
+class_dist <- Metadata_Analysis %>%
+  dplyr::select(PID, all_of(APNS_ordered)) %>%
+  pivot_longer(-PID, names_to = "APNS", values_to = "class") %>%
+  group_by(APNS, class) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(APNS) %>%
+  mutate(pct = round(100 * n / sum(n), 1)) %>%
+  arrange(APNS, desc(n)) %>%
+  pivot_wider(names_from = class, values_from = c(n, pct), values_fill = 0)
+
+# merge latent classes together that have < 20 samples in ED - 6M paired comparison 
+# nightmare: moderate (47) --> high (15)
+# mental fatigue : modrec (14) --> low (86)
+
+Metadata_Analysis <- Metadata_Analysis %>%
+    mutate(PID = as.character(PID)) %>%
+  mutate(Nightmare = case_when(Nightmare == "Moderate" ~ "High", TRUE ~ Nightmare),
+    MentalFatigue = case_when(MentalFatigue == "Moderate Recovery" ~ "Low", TRUE ~ MentalFatigue))
+
+table(Metadata_Analysis$Nightmare)
+table(Metadata_Analysis$MentalFatigue)
+
+#write.csv(Metadata_Analysis, "Data/Metadata/Analysis Data/Metadata_Analysis_8-12-2026.csv")
+
+# add Inventory Code information to metadata 
+
+
+Metadata_Analysis_RNA_paired <- Metadata_Analysis %>%
+  mutate(PID = as.character(PID)) %>%
+  left_join(RNA_manifest %>% mutate(PID = as.character(PID)),
+    by = "PID") %>%
+    dplyr::select(PID, INVENTORY.CODE, Timepoint, everything())
+
+
+#write.csv(Metadata_Analysis, "Data/Metadata/Analysis Data/Metadata_Analysis_All_20260620.csv")
+
+```
+
+
