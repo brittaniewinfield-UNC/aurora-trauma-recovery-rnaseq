@@ -15,7 +15,13 @@ format:
 # repo), where Data/ and the various analysis-output folders already live
 # locally. These folders are NOT part of this git repository (see README) --
 # they stay local / go to Dataverse, never to GitHub.
-knitr::opts_knit$set(root.dir = dirname(here::here()))
+data_root <- dirname(here::here())
+knitr::opts_knit$set(root.dir = data_root)
+setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+
+source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
+shared_DEGs_list <- read_checkpoint("shared_DEGs_list")
+DEA_results_recovered_shared_summary <- read_checkpoint("DEA_results_recovered_shared_summary")
 ```
 
 <!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
@@ -844,3 +850,18 @@ write.csv(APNS_posthoc_results,"RNA-based Recovery Score Final/Post-hoc RRS asso
 ```
 
 
+
+```{r}
+# Checkpoint: these RRS model objects are reused in
+# 10b_rrs_external_validation_painomics.qmd (model coefficients, gene list,
+# full-cohort scores, train/holdout plot halves) and in
+# 11_rrs_risk_resilience_factors.qmd / 12_rrs_hormones_cortisol.qmd
+# (meta_RRS_df).
+save_checkpoint(RRS_AUC, "RRS_AUC")
+save_checkpoint(RRS_full_cohort, "RRS_full_cohort")
+save_checkpoint(beta_vec_final, "beta_vec_final")
+save_checkpoint(final_stable_genes, "final_stable_genes")
+save_checkpoint(p_holdout, "p_holdout")
+save_checkpoint(p_train, "p_train")
+save_checkpoint(meta_RRS_df, "meta_RRS_df")
+```

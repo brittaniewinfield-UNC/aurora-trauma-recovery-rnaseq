@@ -15,7 +15,11 @@ format:
 # repo), where Data/ and the various analysis-output folders already live
 # locally. These folders are NOT part of this git repository (see README) --
 # they stay local / go to Dataverse, never to GitHub.
-knitr::opts_knit$set(root.dir = dirname(here::here()))
+data_root <- dirname(here::here())
+knitr::opts_knit$set(root.dir = data_root)
+setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+
+source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 ```
 
 <!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
@@ -804,18 +808,11 @@ writeData(wb, "Opposer_Summary", opposer_summary_2)
 
 saveWorkbook(wb, out_file, overwrite = TRUE)
 ```
-"#2A93B5", size = 4, fill = NA), 
-             plot.title = element_text(size = 12, color = "black", hjust = 0.5,
-                                       margin = margin(b = 2)))
-  }
 
-  # chronic group for this APNS
-  chronic_class <- chronic_class_for(apns)
-  chronic_key <- paste0(apns, "_", chronic_class)
-
-  if (chronic_key %in% names(all_plots)) {
-    bordered_plots[[paste0(chronic_key, "_border")]] <-
-      all_plots[[chronic_key]] +
-      theme(panel.border = element_rect(color = "#8D1946"
-
-
+```{r}
+# Checkpoint: all_cmap_results, mimicker_summary, and opposer_summary are
+# reused in 13b_cmap_plots_figure6.qmd.
+save_checkpoint(all_cmap_results, "all_cmap_results")
+save_checkpoint(mimicker_summary, "mimicker_summary")
+save_checkpoint(opposer_summary, "opposer_summary")
+```

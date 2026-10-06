@@ -15,7 +15,9 @@ format:
 # repo), where Data/ and the various analysis-output folders already live
 # locally. These folders are NOT part of this git repository (see README) --
 # they stay local / go to Dataverse, never to GitHub.
-knitr::opts_knit$set(root.dir = dirname(here::here()))
+data_root <- dirname(here::here())
+knitr::opts_knit$set(root.dir = data_root)
+setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
 ```
 
 <!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->

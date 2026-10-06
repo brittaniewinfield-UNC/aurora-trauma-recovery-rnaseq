@@ -15,7 +15,11 @@ format:
 # repo), where Data/ and the various analysis-output folders already live
 # locally. These folders are NOT part of this git repository (see README) --
 # they stay local / go to Dataverse, never to GitHub.
-knitr::opts_knit$set(root.dir = dirname(here::here()))
+data_root <- dirname(here::here())
+knitr::opts_knit$set(root.dir = data_root)
+setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+
+source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 ```
 
 <!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
@@ -151,3 +155,16 @@ ggsave(trajectory_plot, filename="Cohort Characteristics/Plots/APNS Latent Class
 ```
 
 
+
+```{r}
+# Checkpoint: the ten per-APNS trajectory line plots are reused in
+# 04b_deg_heatmap_and_volcano_plots.qmd to build the combined
+# trajectory + volcano figure.
+save_checkpoint(
+  list(line_pain = line_pain, line_avoidance = line_avoidance,
+       line_reexperience = line_reexperience, line_hyperarousal = line_hyperarousal,
+       line_anxious = line_anxious, line_somatic = line_somatic,
+       line_mentalfatigue = line_mentalfatigue, line_depression = line_depression,
+       line_nightmare = line_nightmare, line_sleep = line_sleep),
+  "trajectory_lines")
+```

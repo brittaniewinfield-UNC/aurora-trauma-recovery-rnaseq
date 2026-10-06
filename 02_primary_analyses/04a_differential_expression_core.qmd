@@ -15,7 +15,11 @@ format:
 # repo), where Data/ and the various analysis-output folders already live
 # locally. These folders are NOT part of this git repository (see README) --
 # they stay local / go to Dataverse, never to GitHub.
-knitr::opts_knit$set(root.dir = dirname(here::here()))
+data_root <- dirname(here::here())
+knitr::opts_knit$set(root.dir = data_root)
+setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+
+source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 ```
 
 <!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
@@ -527,6 +531,16 @@ DEA_results_recovered_shared_summary <- DEA_results_recovered %>%
   arrange(desc(Avg_Abs_logFC))
 
 #write.csv(DEA_results_recovered_shared_summary, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS Summary Stats.csv")
+
+```{r}
+# Checkpoint: these are reused by several later scripts in this folder
+# (04b, 05, 06, 07, 09, 10a) that depend on them but don't recompute them.
+save_checkpoint(all_DEA_results, "all_DEA_results")
+save_checkpoint(DEA_results_recovered, "DEA_results_recovered")
+save_checkpoint(shared_DEGs_list, "shared_DEGs_list")
+save_checkpoint(DEA_results_recovered_shared_summary, "DEA_results_recovered_shared_summary")
+```
+
 
 
 # recovered contrasts only

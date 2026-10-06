@@ -15,7 +15,12 @@ format:
 # repo), where Data/ and the various analysis-output folders already live
 # locally. These folders are NOT part of this git repository (see README) --
 # they stay local / go to Dataverse, never to GitHub.
-knitr::opts_knit$set(root.dir = dirname(here::here()))
+data_root <- dirname(here::here())
+knitr::opts_knit$set(root.dir = data_root)
+setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+
+source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
+meta_RRS_df <- read_checkpoint("meta_RRS_df")
 ```
 
 <!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
@@ -328,3 +333,9 @@ ggsave(demographics_forest, filename = "Figures/Survey Variables RRS Regression 
 ```
 
 
+
+```{r}
+# Checkpoint: regression_results_df_plot is reused in
+# 12_rrs_hormones_cortisol.qmd.
+save_checkpoint(regression_results_df_plot, "regression_results_df_plot")
+```

@@ -15,7 +15,15 @@ format:
 # repo), where Data/ and the various analysis-output folders already live
 # locally. These folders are NOT part of this git repository (see README) --
 # they stay local / go to Dataverse, never to GitHub.
-knitr::opts_knit$set(root.dir = dirname(here::here()))
+data_root <- dirname(here::here())
+knitr::opts_knit$set(root.dir = data_root)
+setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+
+source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
+all_DEA_results <- read_checkpoint("all_DEA_results")
+DEA_results_recovered <- read_checkpoint("DEA_results_recovered")
+# unpacks line_pain, line_avoidance, ... (ten trajectory plots from 03)
+list2env(read_checkpoint("trajectory_lines"), envir = .GlobalEnv)
 ```
 
 <!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
@@ -532,3 +540,9 @@ ggsave(plot, filename="Figures/v8 (new colors) - Figure 2 APNS Volcano Plot.jpg"
 
 
 
+
+```{r}
+# Checkpoint: DEG_heatmap is reused in
+# 07_ed_vs_6m_cytokines_cellfractions_tfs_crp.qmd.
+save_checkpoint(DEG_heatmap, "DEG_heatmap")
+```
