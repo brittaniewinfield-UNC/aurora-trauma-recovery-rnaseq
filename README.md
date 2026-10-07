@@ -64,6 +64,12 @@ Locally, this repo is meant to sit as a subfolder of your working project direct
 4. Within `02_primary_analyses/`, run in numbered order -- `10a`/`10b` (RRS construction + external validation) must run before `03_two_week_subset_analyses/`, since the two-week scripts read the RRS scores those produce (`RNA-based Recovery Score Final/Final_RRS_Scores_Full_Cohort.csv`).
 5. To render a script to its annotated markdown file: `quarto render 01_data_prep/01_libraries_helpers.qmd --to gfm`, or open it in RStudio and click Render. Each chunk currently has `eval: false` set at the project level (`_quarto.yml`) as a safety default since this is reference/reproduction code with long-running steps (elastic net modeling, CMap queries) -- flip it to `eval: true` per-script (or project-wide) once you're ready to actually execute a given script.
 
+## Running everything at once
+
+`run_all.R`, at the repo root, walks every script in order (the same order as "How to run a script" above) and either sources each one into your current R session or renders it with Quarto -- edit the `MODE`/`STAGES`/`START_AT` settings at the top of the file, then Source it in RStudio or run `Rscript run_all.R` from a terminal.
+
+You only need to run through everything once. After that, every `Checkpoints/*.rds` file a script needs already exists on disk (see "Script dependencies" below), and you can open and run any single script on its own -- no need to replay everything upstream of it again. `START_AT` is there for resuming a partial run (e.g. after fixing an error partway through) without redoing the scripts before it.
+
 ## How to edit a script
 
 Each file is self-contained and editable independently -- edit the `.qmd` directly in RStudio like you would any R Markdown file (the syntax is nearly identical; the only Quarto-specific part is the `#| option: value` chunk-option style in the setup chunk, which you can write more of as needed, e.g. `#| echo: false`). Every script in `02_primary_analyses/` sources a shared `00_setup.R` (libraries, helper functions/constants, and the base data load) and, where needed, reads a small number of objects that a *different*, earlier script in the folder computed -- see "Script dependencies" immediately below before you edit or reorder anything, since removing a `save_checkpoint()`/`read_checkpoint()` call will silently break a later script rather than erroring immediately.
