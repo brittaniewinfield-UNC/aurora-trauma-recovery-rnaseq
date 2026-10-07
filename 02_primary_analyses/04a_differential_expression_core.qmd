@@ -29,122 +29,6 @@ source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 # DIFFERENTIAL EXPRESSION ANALYSIS
 Longitudinal ED–6M differential expression analyses were performed separately within each APNS domain and latent class using dream/limma-voom. For each APNS × class subset, raw counts were filtered for low expression (filterByExpr, min.count = 3), normalized by TMM, and modeled with a linear mixed model including Timepoint (ED vs 6M) as a fixed effect and a random intercept for participant (PID). Empirical Bayes moderation was applied, and results were exported for all genes with logFC, moderated statistics, adjusted P-values, and mean voom-normalized expression at ED and 6M.
 
-## Examine TMM scaling 
-If the TMM scaling factors differ meaningfully acorss trajectories in each APNS, that suggests that global normalization may not be the best option and rather we should do within-class normalization. When comparing the TMM scaling factors across trajectories/classes for each APNS, the only APNS that had a nominally significant ANOVA was Pain. To keep consistency across analyses, global normalization was used for all APNS. 
-
-### Prepare data 
-```{r}
-
-tmm_dir <- "Differential Expression Analyses/TMM Scaling Factor Analysis"
-
-# Storage for all scaling factors
-all_tmm_factors <- list()
-
-for (APNS in APNS_ordered) {
-  
-  cat("\nProcessing APNS:", APNS, "\n")
-  
-  # All samples in this APNS
-  apns_metadata <- coldata[!is.na(coldata[[APNS]]), ]
-  apns_metadata$Timepoint <- relevel(factor(apns_metadata$Timepoint), ref = "ED")
-  apns_metadata$PID <- factor(apns_metadata$PID)
-  
-  # Subset count matrix
-  apns_counts <- count_matrix_t[, apns_metadata$INVENTORY.CODE, drop = FALSE]
-  
-  # Create DGEList and normalize jointly
-  dge_joint <- DGEList(counts = round(apns_counts), genes = rownames(apns_counts))
-  keep <- filterByExpr(dge_joint, group = apns_metadata$Timepoint, min.count = 3)
-  dge_joint <- dge_joint[keep, , keep.lib.sizes = FALSE]
-  dge_joint <- calcNormFactors(dge_joint)
-  
-  # Extract TMM norm factors and attach class labels
-  tmm_df <- data.frame(
-    INVENTORY.CODE = colnames(dge_joint),
-    TMM_factor     = dge_joint$samples$norm.factors,
-    lib_size       = dge_joint$samples$lib.size,
-    APNS           = APNS
-  )
-  
-  # Merge in class and timepoint info
-  tmm_df <- merge(tmm_df, 
-                  apns_metadata[, c("INVENTORY.CODE", "PID", "Timepoint", APNS)],
-                  by = "INVENTORY.CODE")
-  
-  colnames(tmm_df)[colnames(tmm_df) == APNS] <- "Class"
-  
-  all_tmm_factors[[APNS]] <- tmm_df
-}
-
-# Combine all APNS results
-tmm_combined <- do.call(rbind, all_tmm_factors)
-rownames(tmm_combined) <- NULL
-
-write.csv(tmm_combined, 
-          file.path(tmm_dir, "TMM_Scaling_Factors_All.csv"),
-          row.names = FALSE)
-
-
-# Summary statistics — mean and SD of TMM factors per APNS × class
-
-tmm_summary <- tmm_combined %>%
-  group_by(APNS, Class) %>%
-  summarise(
-    N_samples = n(),
-    Mean_TMM = round(mean(TMM_factor), 4),
-    SD_TMM = round(sd(TMM_factor), 4),
-    Median_TMM = round(median(TMM_factor), 4),
-    Min_TMM = round(min(TMM_factor), 4),
-    Max_TMM  = round(max(TMM_factor), 4),
-    Range_TMM = round(max(TMM_factor) - min(TMM_factor), 4),
-    .groups = "drop")
-
-write.csv(tmm_summary, file.path(tmm_dir, "TMM_Scaling_Factor_Summary.csv"), row.names = FALSE)
-
-```
-
-### Stats
-Statistical test — do TMM factors differ significantly across classes within each APNS?
-```{r}
-tmm_combined <- read.csv("Differential Expression Analyses/TMM Scaling Factor Analysis/TMM_Scaling_Factors_All.csv")
-
-anova_results <- list()
-
-for (APNS in APNS_ordered) {
-  
-  apns_data <- tmm_combined %>% filter(APNS == !!APNS)
-  
-  # Need at least 2 classes and enough samples
-  if (length(unique(apns_data$Class)) < 2) next
-  
-  # One-way ANOVA: do TMM factors differ by class?
-  fit <- aov(TMM_factor ~ Class, data = apns_data)
-  p_val <- summary(fit)[[1]][["Pr(>F)"]][1]
-  
-  # Effect size: eta-squared
-  ss_between <- summary(fit)[[1]][["Sum Sq"]][1]
-  ss_total   <- sum(summary(fit)[[1]][["Sum Sq"]])
-  eta_sq     <- round(ss_between / ss_total, 3)
-  
-  anova_results[[APNS]] <- data.frame(
-    APNS        = APNS,
-    F_statistic = round(summary(fit)[[1]][["F value"]][1], 3),
-    p_value     = round(p_val, 4),
-    eta_squared = eta_sq,
-    Significant = ifelse(p_val < 0.05, "Yes", "No")
-  )
-  
-  cat("\nAPNS:", APNS, "| ANOVA p =", round(p_val, 4), 
-      "| eta² =", eta_sq, "\n")
-}
-
-anova_df <- do.call(rbind, anova_results)
-rownames(anova_df) <- NULL
-
-write.csv(anova_df, file.path("Differential Expression Analyses/TMM Scaling Factor Analysis/TMM_ANOVA_Results.csv"),
-          row.names = FALSE)
-```
-
 ## GLOBAL DEA
 ```{r}
 RNA_counts <- RNA_seq_counts %>% dplyr::select(-PID)
@@ -562,6 +446,131 @@ DEA_results_recovered_summary <- DEA_results_recovered %>%
       .names = "Avg_{.col}"),
       .groups = "drop") %>%
   arrange(desc(Avg_Abs_logFC))
+```
+
+<!-- Reordered during dependency-bug review: this section ("Examine TMM
+scaling") uses `coldata`/`count_matrix_t`, which are only created by the
+"GLOBAL DEA" chunk below. In the original source file this section sat
+*before* "GLOBAL DEA" but after it in actual execution order (it only ran
+successfully when `coldata` already existed in memory from an earlier
+session) -- a pre-existing ordering issue, not something introduced by
+splitting this file. Moved here, immediately after "GLOBAL DEA", so the
+file runs correctly top to bottom. Content is otherwise unchanged. -->
+
+## Examine TMM scaling 
+If the TMM scaling factors differ meaningfully acorss trajectories in each APNS, that suggests that global normalization may not be the best option and rather we should do within-class normalization. When comparing the TMM scaling factors across trajectories/classes for each APNS, the only APNS that had a nominally significant ANOVA was Pain. To keep consistency across analyses, global normalization was used for all APNS. 
+
+### Prepare data 
+```{r}
+
+tmm_dir <- "Differential Expression Analyses/TMM Scaling Factor Analysis"
+
+# Storage for all scaling factors
+all_tmm_factors <- list()
+
+for (APNS in APNS_ordered) {
+  
+  cat("\nProcessing APNS:", APNS, "\n")
+  
+  # All samples in this APNS
+  apns_metadata <- coldata[!is.na(coldata[[APNS]]), ]
+  apns_metadata$Timepoint <- relevel(factor(apns_metadata$Timepoint), ref = "ED")
+  apns_metadata$PID <- factor(apns_metadata$PID)
+  
+  # Subset count matrix
+  apns_counts <- count_matrix_t[, apns_metadata$INVENTORY.CODE, drop = FALSE]
+  
+  # Create DGEList and normalize jointly
+  dge_joint <- DGEList(counts = round(apns_counts), genes = rownames(apns_counts))
+  keep <- filterByExpr(dge_joint, group = apns_metadata$Timepoint, min.count = 3)
+  dge_joint <- dge_joint[keep, , keep.lib.sizes = FALSE]
+  dge_joint <- calcNormFactors(dge_joint)
+  
+  # Extract TMM norm factors and attach class labels
+  tmm_df <- data.frame(
+    INVENTORY.CODE = colnames(dge_joint),
+    TMM_factor     = dge_joint$samples$norm.factors,
+    lib_size       = dge_joint$samples$lib.size,
+    APNS           = APNS
+  )
+  
+  # Merge in class and timepoint info
+  tmm_df <- merge(tmm_df, 
+                  apns_metadata[, c("INVENTORY.CODE", "PID", "Timepoint", APNS)],
+                  by = "INVENTORY.CODE")
+  
+  colnames(tmm_df)[colnames(tmm_df) == APNS] <- "Class"
+  
+  all_tmm_factors[[APNS]] <- tmm_df
+}
+
+# Combine all APNS results
+tmm_combined <- do.call(rbind, all_tmm_factors)
+rownames(tmm_combined) <- NULL
+
+write.csv(tmm_combined, 
+          file.path(tmm_dir, "TMM_Scaling_Factors_All.csv"),
+          row.names = FALSE)
+
+
+# Summary statistics — mean and SD of TMM factors per APNS × class
+
+tmm_summary <- tmm_combined %>%
+  group_by(APNS, Class) %>%
+  summarise(
+    N_samples = n(),
+    Mean_TMM = round(mean(TMM_factor), 4),
+    SD_TMM = round(sd(TMM_factor), 4),
+    Median_TMM = round(median(TMM_factor), 4),
+    Min_TMM = round(min(TMM_factor), 4),
+    Max_TMM  = round(max(TMM_factor), 4),
+    Range_TMM = round(max(TMM_factor) - min(TMM_factor), 4),
+    .groups = "drop")
+
+write.csv(tmm_summary, file.path(tmm_dir, "TMM_Scaling_Factor_Summary.csv"), row.names = FALSE)
+
+```
+
+### Stats
+Statistical test — do TMM factors differ significantly across classes within each APNS?
+```{r}
+tmm_combined <- read.csv("Differential Expression Analyses/TMM Scaling Factor Analysis/TMM_Scaling_Factors_All.csv")
+
+anova_results <- list()
+
+for (APNS in APNS_ordered) {
+  
+  apns_data <- tmm_combined %>% filter(APNS == !!APNS)
+  
+  # Need at least 2 classes and enough samples
+  if (length(unique(apns_data$Class)) < 2) next
+  
+  # One-way ANOVA: do TMM factors differ by class?
+  fit <- aov(TMM_factor ~ Class, data = apns_data)
+  p_val <- summary(fit)[[1]][["Pr(>F)"]][1]
+  
+  # Effect size: eta-squared
+  ss_between <- summary(fit)[[1]][["Sum Sq"]][1]
+  ss_total   <- sum(summary(fit)[[1]][["Sum Sq"]])
+  eta_sq     <- round(ss_between / ss_total, 3)
+  
+  anova_results[[APNS]] <- data.frame(
+    APNS        = APNS,
+    F_statistic = round(summary(fit)[[1]][["F value"]][1], 3),
+    p_value     = round(p_val, 4),
+    eta_squared = eta_sq,
+    Significant = ifelse(p_val < 0.05, "Yes", "No")
+  )
+  
+  cat("\nAPNS:", APNS, "| ANOVA p =", round(p_val, 4), 
+      "| eta² =", eta_sq, "\n")
+}
+
+anova_df <- do.call(rbind, anova_results)
+rownames(anova_df) <- NULL
+
+write.csv(anova_df, file.path("Differential Expression Analyses/TMM Scaling Factor Analysis/TMM_ANOVA_Results.csv"),
+          row.names = FALSE)
 ```
 
 ## DOWNSAMPLE DEA 
