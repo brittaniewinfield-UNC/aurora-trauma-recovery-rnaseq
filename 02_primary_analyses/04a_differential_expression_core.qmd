@@ -24,7 +24,7 @@ source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 
 <!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
 
-<!-- ---- original lines 782-1643 ---- -->
+<!------ original lines 782-1643 ---- -->
 
 # DIFFERENTIAL EXPRESSION ANALYSIS
 Longitudinal ED–6M differential expression analyses were performed separately within each APNS domain and latent class using dream/limma-voom. For each APNS × class subset, raw counts were filtered for low expression (filterByExpr, min.count = 3), normalized by TMM, and modeled with a linear mixed model including Timepoint (ED vs 6M) as a fixed effect and a random intercept for participant (PID). Empirical Bayes moderation was applied, and results were exported for all genes with logFC, moderated statistics, adjusted P-values, and mean voom-normalized expression at ED and 6M.
@@ -390,7 +390,7 @@ DEG_recovered_binary_matrix <- DEA_results_recovered %>%
 shared_DEGs_list <- DEG_recovered_binary_matrix %>%
   filter(APNS_count == 10) %>%
   pull(Gene)
-
+ 
 length(shared_DEGs_list)  # 3574 DEGs shared across all 10 recovered APNS
 #write.csv(shared_DEGs_list, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS List.csv")
 
@@ -416,6 +416,11 @@ DEA_results_recovered_shared_summary <- DEA_results_recovered %>%
 
 #write.csv(DEA_results_recovered_shared_summary, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS Summary Stats.csv")
 
+
+```
+
+
+
 ```{r}
 # Checkpoint: these are reused by several later scripts in this folder
 # (04b, 05, 06, 07, 09, 10a) that depend on them but don't recompute them.
@@ -426,7 +431,7 @@ save_checkpoint(DEA_results_recovered_shared_summary, "DEA_results_recovered_sha
 ```
 
 
-
+```{r}
 # recovered contrasts only
 DEA_results_recovered_comp_summary <- DEA_results_recovered %>%
   filter(Gene %in% comprehensive_deg_list) %>%
@@ -620,6 +625,12 @@ clean_filename <- function(x) {
 
 iteration_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Iteration Results 8"
 
+# Set to TRUE to (re-)write the per-iteration CSV + participant manifest
+# files below. Left FALSE by default -- the finalized results for this
+# bootstrap/downsampling analysis already exist and shouldn't be
+# overwritten by re-running this chunk.
+export_iteration_results <- FALSE
+
 run_paired_limma_iteration <- function(APNS, class, iteration, job_id, n_downsample, master_seed) {
   
   # File names
@@ -753,9 +764,11 @@ run_paired_limma_iteration <- function(APNS, class, iteration, job_id, n_downsam
         Timepoint = as.character(Timepoint)) %>%
       dplyr::arrange(PID, factor(Timepoint, levels = c("ED", "M6")))
   
-  # Save outputs
-  readr::write_csv(res, iteration_file)
-  readr::write_csv(participant_manifest, manifest_file)
+  # Save outputs (see export_iteration_results above)
+  if (export_iteration_results) {
+    readr::write_csv(res, iteration_file)
+    readr::write_csv(participant_manifest, manifest_file)
+  }
   
   # Clean memory
   rm(dge, v, fit, sampled_metadata)
