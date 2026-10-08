@@ -1,5 +1,7 @@
 # AURORA Longitudinal RNA-seq: Trauma Recovery
 
+**What this is about, in plain terms:** after a traumatic event, some people recover while others go on to develop chronic pain, PTSD, or related symptoms. This study asks whether the body's early biological response to trauma -- not just one marker, but the coordinated behavior of the immune system, stress hormones, and gene expression together -- looks different in people who recover versus people who don't. Using paired blood samples from trauma survivors collected in the early aftermath of the trauma and again six months later, we find that recovery tracks with a robust, resolving immune and stress response, while chronic symptoms track with a more blunted or incomplete one. This repository contains the complete analysis code behind that finding, organized as one script per analysis step, each runnable and readable on its own.
+
 Analysis code accompanying "Robust coordinated molecular response following trauma promotes recovery and protects against chronic pain and neuropsychiatric symptoms" (AURORA cohort).
 
 Written in [Quarto](https://quarto.org) (`.qmd`). Each script renders to a fully annotated GitHub-flavored-markdown file (code + narrative + figures) via `quarto render`, viewable directly on GitHub.
