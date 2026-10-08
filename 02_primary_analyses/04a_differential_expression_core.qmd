@@ -624,6 +624,7 @@ clean_filename <- function(x) {
 }
 
 iteration_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Iteration Results 8"
+manifest_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Participant Manifests"
 
 # Set to TRUE to (re-)write the per-iteration CSV + participant manifest
 # files below. Left FALSE by default -- the finalized results for this
