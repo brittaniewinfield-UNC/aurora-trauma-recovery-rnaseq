@@ -1,8 +1,13 @@
 # AURORA Longitudinal RNA-seq: Trauma Recovery
 
-**What this is about, in plain terms:** after a traumatic event, some people recover while others go on to develop chronic pain, PTSD, or related symptoms. This study asks whether the body's early biological response to trauma -- not just one marker, but the coordinated behavior of the immune system, stress hormones, and gene expression together -- looks different in people who recover versus people who don't. Using paired blood samples from trauma survivors collected in the early aftermath of the trauma and again six months later, we find that recovery tracks with a robust, resolving immune and stress response, while chronic symptoms track with a more blunted or incomplete one. This repository contains the complete analysis code behind that finding, organized as one script per analysis step, each runnable and readable on its own.
+## Summary 
+This repository contains the analysis code behind a longitudinal multi-omic study of recovery from traumatic stress exposure, using paired whole-blood transcriptomic, immune cell, cytokine, and steroid hormone profiles collected from AURORA study participants at an initial emergency department visit and again six months later. Because prior work has largely examined single biological markers in cross-sectional cohorts, these analyses were designed to capture how transcriptional, innate immune, and stress-hormone biology change together over time, and to test whether that coordinated trajectory, rather than any one signal, distinguishes individuals who recover from those who develop chronic symptoms. Each script corresponds to one analysis step and is runnable and readable independently.
 
-Analysis code accompanying "Robust coordinated molecular response following trauma promotes recovery and protects against chronic pain and neuropsychiatric symptoms" (AURORA cohort).
+## Abstract
+
+The biological processes mediating recovery versus development of adverse posttraumatic neuropsychiatric sequelae (APNS) after traumatic stress exposure remain poorly understood. Here, we characterized longitudinal molecular trajectories among trauma survivors who recovered or had persistent APNS across ten domains (e.g., anxiety, pain). Recovery involved rapid widespread transcriptional changes signaling an early innate immune response that transitioned into homeostatic and wound-healing processes within two weeks and adaptive immunity by six months, whereas persistent APNS trajectories showed fewer molecular changes. To quantify this molecular program, we derived an externally validated RNA Recovery Score (RRS); individuals with higher RRS showed greater clinical recovery, elevated peritraumatic cortisol, and lower cumulative stress. Drug-response profiling identified candidate pathways and molecular interventions with potential to modulate the recovery-associated response. Together, these findings reveal posttraumatic recovery as an active, coordinated biological process and provide a framework for developing interventions that harness endogenous recovery mechanisms to prevent persistent APNS.
+
+Analysis code accompanying "A robust coordinated molecular response following trauma promotes recovery and protects against chronic pain and neuropsychiatric symptoms" (AURORA cohort).
 
 Written in [Quarto](https://quarto.org) (`.qmd`). Each script renders to a fully annotated GitHub-flavored-markdown file (code + narrative + figures) via `quarto render`, viewable directly on GitHub.
 
@@ -54,27 +59,27 @@ data/                          See data/README.md -- no participant-level data i
 
 ## Data
 
-**No raw or processed participant-level data is included in this repository** This is human-subjects trauma-cohort data (RNA-seq, clinical/survey measures, hormone/cytokine/CRP panels); it is deposited separately in **UNC Dataverse** (see `data/README.md` for the access statement -- add the DOI once deposited).
+**No raw or processed participant-level data is included in this repository** This is human-subjects trauma-cohort data (RNA-seq, clinical/survey measures, hormone/cytokine/CRP panels); it is deposited separately in **UNC Dataverse** (see `data/README.md`).
 
-Locally, this repo is meant to sit as a subfolder of your working project directory, alongside your local `Data/` folder and the various named analysis-output folders (`Differential Expression Analyses/`, `CMap Analysis Final/`, `RNA-based Recovery Score Final/`, etc.) -- i.e. exactly where they already are on your machine. Every script's setup chunk resolves a `data_root <- dirname(here::here())` one level up from this repo and both sets `knitr::opts_knit$set(root.dir = data_root)` (for rendering) and calls `setwd(data_root)` directly (so the same thing also works when you run chunks interactively in RStudio, which `opts_knit$set()` alone does not do). None of the 150+ existing relative file paths (`"Data/RNA Data/..."`, `"CMap Analysis Final/..."`, etc.) needed to change. git only tracks what's inside this folder, so none of that local data ever ends up in the commit history, regardless of `.gitignore`. A `Checkpoints/` folder is also created at that same level -- see "Script dependencies" below.
+Locally, this repo is meant to sit as a subfolder of your working project directory, alongside your local `Data/` folder and the various named analysis-output folders (`Differential Expression Analyses/`, `CMap Analysis Final/`, `RNA-based Recovery Score Final/`, etc.). Every script's setup chunk resolves a `data_root <- dirname(here::here())` one level up from this repo and both sets `knitr::opts_knit$set(root.dir = data_root)` (for rendering) and calls `setwd(data_root)` directly (so the same thing also works when you run chunks interactively in RStudio, which `opts_knit$set()` alone does not do). git only tracks what's inside this folder, so none of that local data ever ends up in the commit history, regardless of `.gitignore`. A `Checkpoints/` folder is also created at that same level -- see "Script dependencies" below.
 
 ## How to run a script
 
-1. Open this folder in RStudio (or VS Code with the R + Quarto extensions). `_quarto.yml` marks it as a Quarto project, so `here::here()` resolves correctly no matter which script you're in.
+1. Open this folder in RStudio. `_quarto.yml` marks it as a Quarto project, so `here::here()` resolves correctly no matter which script you're in.
 2. Make sure your local `Data/` and output folders are present one level up (see above).
 3. Run `01_data_prep/` scripts first, in numbered order (01 through 09) -- they read raw/intermediate files and write the processed CSVs that `02_primary_analyses/` and `03_two_week_subset_analyses/` read back in.
-4. Within `02_primary_analyses/`, run in numbered order
-5. To render a script to its annotated markdown file: `quarto render 01_data_prep/01_libraries_helpers.qmd --to gfm`, or open it in RStudio and click Render. Each chunk currently has `eval: false` set at the project level (`_quarto.yml`) as a safety default since this is reference/reproduction code with long-running steps (elastic net modeling, CMap queries) -- flip it to `eval: true` per-script (or project-wide) once you're ready to actually execute a given script.
+4. Within `02_primary_analyses/` and `03_two_week_subset_analyses/`, run in numbered order
+5. To render a script to its annotated markdown file: open it in RStudio and click Render. Each chunk currently has `eval: false` set at the project level (`_quarto.yml`) as a safety default since this is reference/reproduction code with long-running steps -- flip it to `eval: true` per-script (or project-wide) once you're ready to actually execute a given script.
 
 ## Running everything at once
 
 `run_all.R`, at the repo root, walks every script in order (the same order as "How to run a script" above) and either sources each one into your current R session or renders it with Quarto -- edit the `MODE`/`STAGES`/`START_AT` settings at the top of the file, then Source it in RStudio or run `Rscript run_all.R` from a terminal.
 
-You only need to run through everything once. After that, every `Checkpoints/*.rds` file a script needs already exists on disk (see "Script dependencies" below), and you can open and run any single script on its own -- no need to replay everything upstream of it again. `START_AT` is there for resuming a partial run (e.g. after fixing an error partway through) without redoing the scripts before it.
+You only need to run through everything once. After that, every `Checkpoints/*.rds` file a script needs already exists on disk (see "Script dependencies" below), and you can open and run any single script on its own. `START_AT` is there for resuming a partial run (e.g. after fixing an error partway through) without redoing the scripts before it.
 
 ## How to edit a script
 
-Each file is self-contained and editable independently -- edit the `.qmd` directly in RStudio like you would any R Markdown file (the syntax is nearly identical; the only Quarto-specific part is the `#| option: value` chunk-option style in the setup chunk, which you can write more of as needed, e.g. `#| echo: false`). Every script in `02_primary_analyses/` sources a shared `00_setup.R` (libraries, helper functions/constants, and the base data load) and, where needed, reads a small number of objects that a *different*, earlier script in the folder computed -- see "Script dependencies" immediately below before you edit or reorder anything.
+Each file is self-contained and editable independently -- edit the `.qmd` directly in RStudio like you would any R Markdown file. Every script in `02_primary_analyses/` sources a shared `00_setup.R and, where needed, reads a small number of objects that a *different*, earlier script in the folder computed -- see "Script dependencies" immediately below before you edit or reorder anything.
 
 ## Script dependencies (`02_primary_analyses/`)
 
@@ -84,9 +89,9 @@ Every script starts with:
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 ```
 
-which restores the packages, helper functions/constants, and base data load that almost all of them need (this is the restored "DATA PREP" section from the original file -- see "How this repository was built" below). A handful of scripts also depend on a specific *earlier* script's output. Each producing script calls `save_checkpoint(obj, "name")`, which writes `Checkpoints/name.rds` one level above this repo; each consuming script calls `read_checkpoint("name")` to read it back. This means:
+which restores the packages, helper functions/constants, and base data load that almost all of them need. A handful of scripts also depend on a specific *earlier* script's output. Each producing script calls `save_checkpoint(obj, "name")`, which writes `Checkpoints/name.rds` one level above this repo; each consuming script calls `read_checkpoint("name")` to read it back. This means:
 
-- **Run order matters the first time.** A script that needs a checkpoint will stop with a clear error (naming the checkpoint and pointing back here) if you run it before its producer.
+- **Run order matters the first time.** A script that needs a checkpoint will stop with a clear error if you run it before its producer.
 - **After that, every script is independently runnable and re-runnable** -- you do not need to keep re-running earlier scripts in the same R session, only once, in order, so the `Checkpoints/*.rds` files exist on disk.
 
 | Script | Produces (checkpoint) | Needs (checkpoint, from) |
