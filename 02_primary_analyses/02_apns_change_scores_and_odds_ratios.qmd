@@ -11,20 +11,19 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
 
-<!-- ---- original lines 341-653 ---- -->
 
 # APNS CHANGE SCORES
 To identify the latent class exhibiting the greatest and most stable symptom resolution within each APNS domain, classes were ranked using a robust recovery score calculated as the negative median longitudinal change divided by the interquartile range. Use of the interquartile range reduced the influence of within-class dispersion arising from heterogeneous completion and timing of the serial text message–based symptom surveys, as participant-level change scores were derived from the assessments closest to the ED visit and closest to the estimated 6-month follow-up timepoint for each participant.
@@ -268,7 +267,7 @@ recovered_heatmap <- ggplot(plot_recovered_OR, aes(x = APNS_B, y = APNS_A, fill 
 # combine plot
 combined_heatmap <- ggarrange(chronic_heatmap,recovered_heatmap, ncol = 2, align = "hv", common.legend = FALSE, labels = c("a", "b"), font.label = list(size = 16, face = "bold", color = "black"))
 
-ggsave("Figures/Ext Data Fig 1 - Odds Ratio Heatmap.jpg", plot = combined_heatmap, height = 3, width = 8, dpi = 500)
+ggsave("Odds Ratio Analysis/Plots/Odds Ratio Heatmap.jpg", plot = combined_heatmap, height = 3, width = 8, dpi = 500)
 
 ```
 
@@ -284,7 +283,7 @@ recovered_or_export <- recovered_or_results %>%
          APNS_B = factor(APNS_B, levels = APNS_ordered), 
          across(where(is.numeric), format_num))
 
-out_file <- "Odds Ratio Analyses/Summaries/APNS_Odds_Ratio_Analyses.xlsx"
+out_file <- "Odds Ratio Analysis/Summaries/APNS_Odds_Ratio_Analyses.xlsx"
 
 OR_wb <- createWorkbook()
 

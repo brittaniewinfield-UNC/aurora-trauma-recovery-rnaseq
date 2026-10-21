@@ -11,36 +11,28 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 meta_RRS_df <- read_checkpoint("meta_RRS_df")
+
+
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 6248-6552 ---- -->
 
 # RRS + DEMOGRAPHICS
 
 ## Analysis
 Demographic, stress/adversity, and medication predictors were harmonized and grouped into three hypothesis families. For each predictor, a univariate linear model was fit with RRS as the outcome, returning raw β estimates and two-sided P-values. Continuous variables were additionally standardized to obtain standardized β and confidence intervals. BH FDR was applied within each predictor family.
 ```{r}
-full_meta <- read.csv("Data/Analysis Data/Metadata/Metadata Complete 2626.csv")
 
-full_meta_plot <- full_meta %>%
-  dplyr::select(PID, WK2_Stress_MAX, WK8_Stress_MAX, M3_Stress_MAX, 
-                WK2_PROM_Pain4a_T, WK8_PROM_Pain4a_T, M3_PROM_Pain4a_T, 
-                WK8_PSS10_Total_RS, M3_PSS10_Total_RS, M6_PSS10_Total_RS,
-                PRE_PSS10_CantCope_RS, WK8_PSS10_CantCope_RS, M3_PSS10_CantCope_RS, M6_PSS10_CantCope_RS,
-                PRE_PSS10_Distress_RS, WK8_PSS10_Distress_RS, M3_PSS10_Distress_RS, M6_PSS10_Distress_RS,
-                WK2_Pain, WK8_Pain, M3_Pain, M6_Pain) %>%
+full_meta_plot <- Metadata_Analysis %>%
   mutate(PID = as.character(PID)) %>%
   left_join(meta_RRS_df, by = "PID")
 
@@ -137,7 +129,7 @@ regression_results_df <- regression_results_df %>%
   ungroup() %>%
   arrange(FDR)
 
-#write.csv(regression_results_df, "RRS Correlates/Survey Variables Linear Regression Results_Support_20260820.csv")
+write.csv(regression_results_df, "RRS Correlates/Survey Variables Linear Regression Results_Support_20260820.csv")
 
 ```
 
@@ -288,7 +280,7 @@ regression_results_df_export <- regression_results_df_export %>%
     ~ gsub("[↑]", "higher", .x))) %>%
   arrange(FDR)
 
-write.csv(regression_results_df_export, "RRS Correlates/Survey Variables Linear Regression Results 20260903.csv")
+write.csv(regression_results_df_export, "RRS Correlates/Survey Variables Linear Regression Results.csv")
 
 #range(regression_results_df_plot$CI_lower, na.rm = TRUE) 
 # -0.84173956  0.01316873
@@ -305,8 +297,8 @@ regression_results_df_plot1 <- regression_results_df_plot %>% filter(var_class !
 demographics_forest <- ggplot(
   regression_results_df_plot1,
   aes(x = Plot_Coefficient, y = Display, shape = Type, color = Direction)) +
-  geom_errorbarh(aes(xmin = Plot_CI_lower, xmax = Plot_CI_upper), height = 0.45,  linewidth = 1.2) +
-  geom_point(size = 5) +
+  geom_errorbarh(aes(xmin = Plot_CI_lower, xmax = Plot_CI_upper), height = 0.45,  linewidth = 0.5) +
+  geom_point(size = 3) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
   facet_grid(Category ~ ., scales = "free_y", space  = "free", switch = "y") +
   scale_alpha_manual(values = c("nonsig" = 0.7, "sig" = 1), guide  = "none") +
@@ -320,14 +312,14 @@ demographics_forest <- ggplot(
   theme_minimal() +
   theme(
     strip.placement = "none",
-    strip.text.y.left = element_text(size = 12.5, face = "bold"),
-    axis.text.y = element_text(size = 12, color = "black"),
-    axis.text.x = element_text(size = 12, color = "black"),
-    axis.title.x = element_text(size = 12, color = "black"),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    strip.text.y.left = element_text(size = 7),
+    axis.text.y = element_text(size = 7, color = "black"),
+    axis.text.x = element_text(size = 7, color = "black"),
+    axis.title.x = element_text(size = 7, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
     legend.position = "none")
 
-ggsave(demographics_forest, filename = "Figures/Survey Variables RRS Regression Forest Plot v2.jpg", width = 5.5, height = 6, dpi = 300)
+ggsave(demographics_forest, filename = "Figures/Survey Variables RRS Regression Forest Plot.jpg", width = 5.5, height = 6, dpi = 300)
 
 
 ```

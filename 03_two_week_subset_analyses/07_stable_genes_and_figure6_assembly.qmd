@@ -11,24 +11,21 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root) 
 ```
 
-<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
-
-<!-- ---- original lines 2243-2526 ---- -->
 
 # STABLE GENES 
 
 ## Within class 
 ```{r}
-stable_genes_summarized <- read.csv("RNA-based Recovery Score Final/Selected_Stable_Genes(46)_Summarized_DEA_Stats.csv") %>%
+stable_genes_summarized <- read.csv("RNA-based Recovery Score/Selected_Stable_Genes(46)_Summarized_DEA_Stats.csv") %>%
   dplyr::select(Gene, Expression_Direction)
 
 ED_up_genes <- stable_genes_summarized %>% filter(Expression_Direction == "Higher_ED") %>% pull(Gene)
@@ -98,39 +95,10 @@ rrs_genes_interval_results <- purrr::map_dfr(
   arrange(Signature, Comparison)
 
 
-write.csv(rrs_genes_interval_results, "2WK Analyses/RRS Genes/Within Group Longitudinal Tests/EDWK2M6_RRS_gene_within_class_results.csv")
+write.csv(rrs_genes_interval_results, "2WK Analyses/RRS Genes/EDWK2M6_RRS_gene_within_class_results.csv")
 
 ```
 
-## Between class 
-```{r}
-
-rrs_genes_delta_results <- purrr::map_dfr(
-  unique(RRS_genes_wk2_wide$Signature),
-  function(sig) {
-
-    df_ct <- RRS_genes_wk2_wide %>% filter(Signature == sig)
-
-    bind_rows(
-      run_delta_test(df_ct, "delta_ED_WK2") %>%
-        mutate(Comparison = "ED_vs_WK2"),
-      run_delta_test(df_ct, "delta_WK2_M6") %>%
-        mutate(Comparison = "WK2_vs_M6"), 
-      run_delta_test(df_ct, "delta_ED_M6") %>%
-        mutate(Comparison = "ED_vs_M6")) %>%
-      mutate(Signature = sig, .before = 1)
-  }) %>%
-  group_by(Signature) %>%
-  mutate(FDR = p.adjust(p.value, method = "BH")) %>%
-  ungroup() %>%
-  mutate(Comparison = factor(Comparison, levels = c("ED_vs_WK2", "WK2_vs_M6", "ED_vs_M6"))) %>%
-  arrange(Signature, Comparison) %>%
-  dplyr::select(Signature, Comparison, everything())
-
-
-write.csv(rrs_genes_delta_results, "2WK Analyses/RRS Genes/Between Group Change Score Tests/EDWK2M6_RRS_gene_between_class_results.csv")
-
-```
 
 ## Figure 6a
 ```{r}
@@ -167,7 +135,7 @@ stable_genes_line <- ggplot(plot_df, aes(Timepoint, mean, color = RRS_median_gro
 
 ```
 
-## Figure 6a v2 
+## Figure 
 ```{r}
 plot_df <- RRS_genes_wk2_df %>%
   mutate(
@@ -186,10 +154,10 @@ plot_df <- RRS_genes_wk2_df %>%
 stable_genes_line <- ggplot(plot_df, aes(x = time_days, y = mean, 
                                          color = RRS_median_group, 
                                          group = RRS_median_group)) +
-  geom_line(linewidth = 2) +
-  geom_point(size = 3.5) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
   geom_errorbar(aes(ymin = mean - se, ymax = mean + se), 
-                width = 4, linewidth = 0.7) +
+                width = 2, linewidth = 0.7) +
   facet_wrap(~Signature, scales = "free_y", nrow = 1) +
   scale_color_manual(values = c("Low_RRS" = "#8D1946", "High_RRS" = "#2A93B5"), 
                      labels = c("Low_RRS" = "Low RRS", "High_RRS" = "High RRS")) +
@@ -201,20 +169,20 @@ stable_genes_line <- ggplot(plot_df, aes(x = time_days, y = mean,
   ) +
   labs(x = " ", y = "Σ Expression", color = NULL) +
   guides(color = guide_legend(override.aes = list(size = 4, alpha = 1))) +
-  theme_minimal(base_size = 16) +
+  theme_minimal(base_size = 7) +
   theme(
     strip.background = element_blank(),
-    strip.text = element_text(size = 14, face = "plain", margin = margin(b = 10)),
-    axis.title = element_text(size = 16),
-    axis.text.x = element_text(size = 14, color = "black"),
-    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
-    legend.text = element_text(size = 14),
+    strip.text = element_text(size = 7, face = "plain", margin = margin(b = 3)),
+    axis.title = element_text(size = 7),
+    axis.text.x = element_text(size = 7, color = "black"),
+    axis.text.y.left = element_text(color = "black", size = 7, margin = margin(r = 1)),
+    legend.text = element_text(size = 7),
     legend.position = "none",
     legend.margin = margin(t = -12),
     legend.box.margin = margin(t = -12),
     panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
     panel.grid.minor = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8), 
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7), 
     plot.margin = margin(r = 30)
   )
 
@@ -224,47 +192,62 @@ stable_genes_line <- ggplot(plot_df, aes(x = time_days, y = mean,
 
 
 
-#FIGURE 6 Prep 
+# COMBINED FIGURE
 
 
 ## Combine stable genes + volcanoes 
 ```{r}
-#panels_a_b <- ggarrange(stable_genes_line, volcano_plot,GOBP_figure6,  nrow = 1, align = "hv", axis = "tb", widths = c(1,1,1.5), labels = c("a", "b", "c"), font.label = list(size = 28, face = "bold"))
-
 stable_genes_line_top <- stable_genes_line +
-  theme( plot.margin = margin(t = 15, r = 15, b = 5, l = 15))
+  theme( plot.margin = margin(t = 5, r = 5, b = 5, l = 5), 
+         axis.text = element_text(size = 7, color = "black"), 
+         axis.title = element_text(size = 7, color = "black"),
+         plot.title = element_text(size = 7, color = "black"))
 
 volcano_plot_top <- volcano_plot +
-  theme(plot.margin = margin(t = 5, r = 15, b = 5, l = 15))
+    theme( plot.margin = margin(t = 5, r = 5, b = 5, l = 5), 
+         axis.text = element_text(size = 7, color = "black"), 
+         axis.title = element_text(size = 7, color = "black"),
+         plot.title = element_text(size = 7, color = "black"))
 
 GOBP_figure6_top <- GOBP_figure6 +
-  theme(    plot.margin = margin(t = 15, r = 15, b = 5, l = 15),
-    plot.title = element_text(margin = margin(b = -5), hjust = 0.5)
+  theme(plot.margin = margin(t = 5, r = 5, b = 5, l = 5), 
+         axis.text = element_text(size = 7, color = "black"), 
+         axis.title = element_text(size = 7, color = "black"),
+    plot.title = element_text(margin = margin(b = -5), hjust = 0.5, size = 7)
   )
 
 blank_plot <- ggplot() +
   theme_void()
 
 cell_fraction_plot_top <- cell_fraction_plot  +
-  theme(plot.margin = margin(t = 5, r = 15, b = 5, l = 25))
+  theme(plot.margin = margin(t = 5, r = 5, b = 5, l = 10),
+        axis.text = element_text(size = 7, color = "black"), 
+         axis.title = element_text(size = 7, color = "black"),
+         plot.title = element_text(size = 7, color = "black"))
 
 tf_plot_top <- tf_plot  +
-  theme( plot.margin = margin(t = 25, r = 15, b = 5, l = 15))
+  theme( plot.margin = margin(t = 10, r = 5, b = 5, l = 15),
+          axis.text = element_text(size = 7, color = "black"), 
+         axis.title = element_text(size = 7, color = "black"),
+         plot.title = element_text(size = 7, color = "black"))
 
 cytokine_plot_top <- cytokine_plot  +
-  theme( plot.margin = margin(t = 25, r = 15, b = 5, l = 15))
+  theme( plot.margin = margin(t = 10, r = 15, b = 5, l = 15),
+                  axis.text = element_text(size = 7, color = "black"), 
+         axis.title = element_text(size = 7, color = "black"),
+         plot.title = element_text(size = 7, color = "black"))
 
 panels_a_b_blank <- ggarrange(
     blank_plot,
   stable_genes_line_top,
   volcano_plot_top,
   nrow = 1,
-  align = "hv",
+  align = "h",
   #axis = "tblr",
   widths = c(0.75, 1, 1),
   labels = c("", "a", "b"),
-   label.y = 1.0,
-  font.label = list(size = 28, face = "bold")
+   label.y = 1.01,
+  font.label = list(size = 10, face = "bold")
 )
 
 panles_c_d <- ggarrange(
@@ -276,7 +259,7 @@ panles_c_d <- ggarrange(
   widths = c(1, 1.1),
   labels = c("c", "d"),
    label.y = 1.01,
-  font.label = list(size = 28, face = "bold")
+  font.label = list(size = 10, face = "bold")
 )
 
 panel_e_f <- ggarrange(
@@ -285,7 +268,7 @@ panel_e_f <- ggarrange(
   nrow = 2, 
   heights = c(1, 0.55),
   labels = c("e", "f"),
-  font.label = list(size = 28, face = "bold"))
+  font.label = list(size = 10, face = "bold"))
 
 
 figure_5 <- ggarrange(
@@ -298,13 +281,7 @@ figure_5 <- ggarrange(
 )
 
 
-
-#figure_5 <- ggarrange(panels_a_b_c, cell_fraction_plot, tf_plot, cytokine_plot, nrow = 4, align = "hv", heights = c(2.7,4,3.8,2.1), labels = c("","d", "e", "f"), font.label = list(size = 28, face = "bold"), label.x = 0, label.y = 1.05)
-
-
-
-
-ggsave(filename = "Figure 6 - 2wk analyses - POSTER.jpg", plot = figure_5,  width = 11, height = 10, dpi = 300)
+ggsave(filename = "2WK Analyses/Plots/2WK Analysis (Figure 5).jpg", plot = figure_5,  width = 180, height = 150, units = "mm", dpi = 300)
 ```
 
 

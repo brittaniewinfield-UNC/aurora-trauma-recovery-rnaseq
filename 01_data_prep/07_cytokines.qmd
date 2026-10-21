@@ -11,18 +11,15 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 ```
 
-<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 1048-1275 ---- -->
 
 # CYTOKINES (ED, 2WK, 6M)
 
@@ -107,7 +104,7 @@ cytokine_batch_plate_summary <- map_dfr(cytokines_to_test, function(cyt) {
   mutate(Test = "ANOVA")
 
 
-write.csv(cytokine_batch_plate_summary, "Data/Cytokine Data/Analysis Data/Cytokine_Batch_Effect_Summary_3-23-2026.csv")
+write.csv(cytokine_batch_plate_summary, "Data/Cytokine Data/Analysis Data/Cytokine_batch_effect_summary.csv")
 
 cytokine_data_adjusted <- cytokine_data_full
 
@@ -164,7 +161,7 @@ cytokine_matrix_ED6M <- cytokine_matrix_clean %>%
 
 dim(cytokine_matrix_ED6M) # 422 x 7 
 
-write.csv(cytokine_matrix_ED6M, "Data/Cytokine Data/Analysis Data/Cytokine_Data_ED6M_422_3-23-2026.csv")
+write.csv(cytokine_matrix_ED6M, "Data/Cytokine Data/Analysis Data/Cytokine_data_ED6M_analysis.csv")
 
 # subset to ED, WK2 and 6M paired samples in RNA-seq
 cytokine_matrix_ED2WK6M <- cytokine_matrix_clean %>%
@@ -178,7 +175,7 @@ cytokine_matrix_ED2WK6M <- cytokine_matrix_clean %>%
 
 dim(cytokine_matrix_ED2WK6M) # 51 x 7 
 
-write.csv(cytokine_matrix_ED2WK6M, "Data/Cytokine Data/Analysis Data/Cytokine_Data_ED2WK6M_51_3-23-2026.csv")
+write.csv(cytokine_matrix_ED2WK6M, "Data/Cytokine Data/Analysis Data/Cytokine_data_ED2WK6M_analysis.csv")
 ```
 
 ## Normality 
@@ -247,7 +244,7 @@ cytokine_stats_compare <- bind_rows(
 
 cytokine_stats_compare
 
-write.csv(cytokine_stats_compare, "Data/Cytokine Data/Analysis Data/Cytokine_Data_Stat_Summary_3-23-2026.csv", row.names = FALSE)
+write.csv(cytokine_stats_compare, "Data/Cytokine Data/Analysis Data/Cytokine_data_stat_summary.csv", row.names = FALSE)
 
 ```
 

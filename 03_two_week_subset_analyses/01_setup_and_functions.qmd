@@ -11,18 +11,14 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 ```
-
-<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
-
-<!-- ---- original lines 1-155 ---- -->
 
 
 ```{r}
@@ -31,7 +27,6 @@ library(variancePartition)
 library(limma)
 library(BiocParallel)
 library(dplyr)
-
 ```
 
 # Load data
@@ -43,16 +38,18 @@ PIDs_2wk <- PIDs_2WK$x
 
 ICs_2WK <- read.csv("Data/Metadata/Analysis Data/ICs_120_ED2WK6M.csv")
 ICs_2wk <- ICs_2WK$x
+
+
 ```
 
 ## Metadata 
 ```{r}
-metadata <- read.csv("Data/Metadata/Analysis Data/Metadata_Analysis_3-23-2026.csv")
+metadata <- read.csv("Data/Metadata/Analysis Data/Metadata_analysis.csv")
 metadata_2wk <- metadata %>% filter(PID %in% PIDs_2wk)
 
 dim(metadata_2wk)
 
-metadata_ICs <- read.csv("Data/Metadata/Analysis Data/Metadata_Analysis_ICs_3-23-2026.csv")
+metadata_ICs <- read.csv("Data/Metadata/Analysis Data/Metadata_ICs_analysis.csv")
 metadata_ICs_2wk <- metadata_ICs %>% filter(INVENTORY.CODE %in% ICs_2wk) %>%
   mutate(PID = as.character(PID)) %>%
   dplyr::select(-X)
@@ -62,9 +59,7 @@ dim(metadata_ICs_2wk)
 
 ## RRS data 
 ```{r}
-RRS_df <- read.csv("RNA-based Recovery Score Final/Final_RRS_Scores_Full_Cohort.csv")
-
-#RRS_df_2wk <- RRS_df %>% filter(PID %in% PIDs_2wk)
+RRS_df <- read.csv("RNA-based Recovery Score/Final_RRS_Scores_Full_Cohort.csv")
 
 # median split of full cohort based on RRS
 rrs_median <- median(RRS_df$RRS, na.rm = TRUE)
@@ -87,15 +82,15 @@ table(RRS_df_median_2wk$RRS_median_group)
 
 ## RNA data 
 ```{r}
-RNA_counts_2wk <- read.csv("Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_counts_ED2WK6M_120_3-23-2026.csv")
+RNA_counts_2wk <- read.csv("Data/RNA Data/Analysis Data/AURORA_RNAseq_counts_ED2WK6M_analysis.csv")
 
-RNA_log2_2wk <- read.csv("Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_log2_ED2WK6M_120_3-23-2026.csv")
+RNA_log2_2wk <- read.csv("Data/RNA Data/Analysis Data/AURORA_RNAseq_log2_ED2WK6M_analysis.csv")
 
 ```
 
 ## Transcription Factor Activity 
 ```{r}
-TF_data_EDWK2M6 <- read.csv("Data/Transcription Factor Data/Analysis Data/TF_Activity_ED2WK6M_120_3-31-2026.csv") %>%
+TF_data_EDWK2M6 <- read.csv("Data/Transcription Factor Data/Analysis Data/TF_activity_ED2WK6M_analysis.csv") %>%
   dplyr::select(-X) %>%
   dplyr::select(PID, Timepoint, INVENTORY.CODE, everything()) %>%
   mutate(PID = as.character(PID))

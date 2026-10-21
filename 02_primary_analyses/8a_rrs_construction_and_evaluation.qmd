@@ -11,22 +11,19 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 shared_DEGs_list <- read_checkpoint("shared_DEGs_list")
 DEA_results_recovered_shared_summary <- read_checkpoint("DEA_results_recovered_shared_summary")
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 5010-5830 ---- -->
 
 # RNA-BASED RECOVERY SCORE
 
@@ -123,7 +120,7 @@ threshold_results <- threshold_grid %>%
   ungroup() %>%
   arrange(desc(n_recovered + n_chronic))
 
-write.csv(threshold_results, "RNA-based Recovery Score Final/Binary_Outcome_Threshold_Grid_Results.csv")
+write.csv(threshold_results, "RNA-based Recovery Score/Binary_Outcome_Threshold_Grid_Results.csv")
 
 metadata_extreme <- metadata_model %>%
   left_join(apns_counts, by = "PID") %>%
@@ -133,8 +130,6 @@ metadata_extreme <- metadata_model %>%
       n_chronic >= 2 & n_recovered < 7 ~ "Chronic_extreme",
       TRUE ~ "Intermediate"))
 
-metadata_extreme %>%
-  dplyr::count(Extreme_Group)
 ```
 
 ## Monte Carlo elastic net modeling
@@ -207,7 +202,7 @@ RRS_metadata_comparison <- metadata_extreme %>%
     prop_black = mean(Race == "Black", na.rm = TRUE), 
     prop_other = mean (Race == "Other", na.rm = TRUE))
 
-write.csv(RRS_metadata_comparison, "RNA-based Recovery Score Final/Metadata_Train_Test_Intermediate_Cohorts.csv")
+write.csv(RRS_metadata_comparison, "RNA-based Recovery Score /Metadata_Train_Test_Intermediate_Cohorts.csv")
 
 metadata_extreme_only %>%
   dplyr::count(Split, Extreme_Group, Gender)
@@ -291,24 +286,24 @@ for (b in seq_len(B)) {
 split_stability_all_df <- bind_rows(split_stability_all)
 stab_coeffs_all_df <- bind_rows(stab_coeffs_all)
 
-write.csv(split_stability_all_df, "RNA-based Recovery Score Final/All_Split_Gene_Selections.csv")
-write.csv(stab_coeffs_all_df, "RNA-based Recovery Score Final/stab_coeffs_all_df_20260507.csv")
-saveRDS(stab_coeffs_all, "RNA-based Recovery Score Final/stab_coeffs_all_20260507.rds")
+write.csv(split_stability_all_df, "RNA-based Recovery Score/All_Split_Gene_Selections.csv")
+write.csv(stab_coeffs_all_df, "RNA-based Recovery Score/stab_coeffs_all_df.csv")
+saveRDS(stab_coeffs_all, "RNA-based Recovery Score/stab_coeffs_all.rds")
 
 full_model_results <- split_stability_all_df %>%
   left_join(stab_coeffs_all_df, by = c("Gene", "X", "Outer_Split")) %>%
   dplyr::select(Outer_Split, Gene, Mean_Beta, Nonzero_Fits, Proportion_Selected) %>%
   dplyr::rename(Nonzero_Fits_Proportion = Proportion_Selected) 
 
-write.csv(full_model_results, "RNA-based Recovery Score Final/Full_RRS_Model_Results.csv")
+write.csv(full_model_results, "RNA-based Recovery Score/Full_RRS_Model_Results.csv")
 
 ```
 
 ### Select stable RRS genes 
 Gene stability was evaluated across bootstrap iterations and Monte Carlo outer splits. Within each outer split, genes were considered stable if they were selected in at least 50% of bootstrap elastic net models. Threshold sensitivity analyses were then performed across combinations of within-split and outer-split stability thresholds to evaluate how threshold selection influenced the size of the resulting gene signature. Lower thresholds produced substantially larger signatures, whereas more stringent thresholds rapidly reduced the number of retained genes. A within-split stability threshold of 50% combined with an outer-split stability threshold of 40% produced a final 46-gene signature and was selected for downstream analyses. Genes meeting both stability criteria were retained as the final RRS gene set.
 ```{r}
-split_stability_all_df <- read.csv("RNA-based Recovery Score Final/split_stability_all_df_20260507.csv")
-stab_coeffs_all_df <- read.csv("RNA-based Recovery Score Final/stab_coeffs_all_df_20260507.csv")
+split_stability_all_df <- read.csv("RNA-based Recovery Score/split_stability_all_df.csv")
+stab_coeffs_all_df <- read.csv("RNA-based Recovery Score/stab_coeffs_all_df.csv")
 
 
 within_split_threshold_grid <- tibble(within_split_thresh = c(0.3, 0.4, 0.5, 0.6, 0.7))
@@ -343,7 +338,7 @@ threshold_gene_counts <- threshold_grid %>%
     values_from = n_genes,
     names_prefix = "outer_")
 
-write.csv(threshold_gene_counts, "RNA-based Recovery Score Final/Stable_Gene_Threshold_Grid_Results.csv")
+#write.csv(threshold_gene_counts, "RNA-based Recovery Score Final/Stable_Gene_Threshold_Grid_Results.csv")
 
 # final stability thresholds
 within_split_thresh <- 0.5
@@ -366,10 +361,7 @@ final_stable_genes <- outer_stability_df %>%
 
 length(final_stable_genes) # 46
 
-#write.csv(final_stable_genes, "RNA-based Recovery Score v2/Genes Selected for RRS (46).csv")
-
-#final_stable_genes_46 <- final_stable_genes
-
+write.csv(final_stable_genes, "RNA-based Recovery Score/Genes Selected for RRS (46).csv")
 
 gene_selection_summary <- split_stability_all_df %>%
   group_by(Gene) %>%
@@ -388,7 +380,7 @@ gene_selection_summary <- split_stability_all_df %>%
   mutate(Final_RRS_Gene = Proportion_Outer_Stable >= outer_split_thresh) %>%
   arrange(desc(Proportion_Outer_Stable), desc(Within_Split_Selected))
 
-write.csv(gene_selection_summary, "RNA-based Recovery Score Final/All_Gene_Input_Selection_Summary.csv")
+write.csv(gene_selection_summary, "RNA-based Recovery Score/All_Gene_Input_Selection_Summary.csv")
 
 
 RRS_direction_df <- DEA_results_recovered_shared_summary %>%
@@ -400,7 +392,7 @@ RRS_direction_df <- DEA_results_recovered_shared_summary %>%
       TRUE ~ "No_change")) %>%
   dplyr::arrange(Expression_Direction)
 
-write.csv(RRS_direction_df, "RNA-based Recovery Score Final/Selected_Stable_Genes(46)_Summarized_DEA_Stats.csv")
+write.csv(RRS_direction_df, "RNA-based Recovery Score/Selected_Stable_Genes(46)_Summarized_DEA_Stats.csv")
 
 RRS_up_6M <- RRS_direction_df %>%
   dplyr::filter(Expression_Direction == "Higher_6M") %>%
@@ -421,8 +413,8 @@ length(RRS_up_ED) # 20
 Average elastic net coefficients were calculated across outer splits for genes retained following stability selection. These aggregated coefficients were used to generate a locked beta vector representing the final RRS gene signature. Participant-level RRS values were calculated as the weighted sum of longitudinal log2 fold-changes using the locked beta coefficients. The same locked coefficient vector was applied to the training, holdout, and intermediate AURORA participants.
 ```{r}
 
-stab_coeffs_all <- readRDS("RNA-based Recovery Score Final/stab_coeffs_all_20260507.rds")
-final_stable_genes <- read.csv("RNA-based Recovery Score Final/Selected_Stable_Genes_Final_Coefficients.csv")$Gene
+stab_coeffs_all <- readRDS("RNA-based Recovery Score/stab_coeffs_all.rds")
+final_stable_genes <- read.csv("RNA-based Recovery Score/Selected_Stable_Genes_Final_Coefficients.csv")$Gene
 # aggregate stable elastic net coefficients across outer splits
 stable_coef_df <- bind_rows(stab_coeffs_all) %>%
   filter(Gene %in% final_stable_genes) %>%
@@ -431,7 +423,7 @@ stable_coef_df <- bind_rows(stab_coeffs_all) %>%
             .groups = "drop") %>%
   arrange(desc(abs(Avg_Beta)))
 
-#write.csv(stable_coef_df, "RNA-based Recovery Score Final/Selected_Stable_Genes_Final_Coefficients.csv")
+write.csv(stable_coef_df, "RNA-based Recovery Score/Selected_Stable_Genes_Final_Coefficients.csv")
 
 # locked final beta vector
 beta_vec_final <- stable_coef_df$Avg_Beta
@@ -468,7 +460,7 @@ RRS_full_cohort <- bind_rows(
   intermediate_eval_df) %>%
   mutate(Group = factor(Group,levels = c("Chronic_extreme", "Intermediate", "Recovered_extreme")))
 
-#write.csv(RRS_full_cohort, "RNA-based Recovery Score Final/Final_RRS_Scores_Full_Cohort.csv")
+write.csv(RRS_full_cohort, "RNA-based Recovery Score/Final_RRS_Scores_Full_Cohort.csv")
 
 
 # attach metadata to full-cohort RRS
@@ -526,7 +518,8 @@ RRS_full_heldout_cohort <- RRS_full_cohort %>%
 anova(lm(RRS ~ Group, data = RRS_full_heldout_cohort))
 #            Df Sum Sq Mean Sq F value    Pr(>F)    
 # Group       2  1.6825  0.84127 3.44      0.03585
-
+anova(lm(RRS ~ Group, data = RRS_full_heldout_cohort))
+# full table includes a "Residuals" row with its own Df — that's the second number needed for F(df1, df2)
 ```
 
 ### Plot RRS distributions 
@@ -577,22 +570,22 @@ train_p_label <- "p < 0.001"
 p_train <- rrs_plot_df %>%
   filter(Set == "Training Cohort") %>%
   ggplot(aes(x = Plot_Group, y = RRS, fill = Plot_Group)) +
-  geom_boxplot(width = 0.5, outlier.shape = NA, color = "black", linewidth = 0.5, alpha = 0.8) +
-  geom_jitter(aes(color = Plot_Group), width = 0.12, size = 2, alpha = 0.7, show.legend = FALSE) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2, fill = "black", color = "black") +
+  geom_boxplot(width = 0.5, outlier.shape = NA, color = "black", linewidth = 0.3, alpha = 0.8) +
+  geom_jitter(aes(color = Plot_Group), width = 0.12, size = 1, alpha = 0.7, show.legend = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 1.5, fill = "black", color = "black") +
   scale_fill_manual(values = group_colors) +
   scale_color_manual(values = group_colors) +
-  annotate("text", x = 1.5, y = 1.4, label = train_p_label, size = 5) +
+  annotate("text", x = 1.5, y = -1.2, label = train_p_label, size = 2.5) +
   labs(title = "Training Cohort\n(AURORA)", x = NULL, y = "RRS") +
-  theme_minimal(base_size = 16) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid.minor = element_blank(),
     panel.grid.major.x = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
-    axis.text.y = element_text(color = "black"),
-    axis.title.y = element_text(size = 16, margin = margin(r = 0), vjust = -4),
-    plot.title = element_text(face = "bold", hjust = 0.5),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+    axis.text.x = element_text(size = 7, color = "black"),
+    axis.text.y = element_text(color = "black", size = 7),
+    axis.title.y = element_text(size = 7, margin = margin(r = 0), vjust = -4),
+    plot.title = element_text(hjust = 0.5, size = 7),
     legend.position = "none")
 
 p_train
@@ -609,27 +602,27 @@ holdout_t_label <- paste0("p = ", signif(holdout_t$p.value, 2))
 p_holdout <- rrs_plot_df %>%
   filter(Set == "Holdout Cohort") %>%
   ggplot(aes(x = Plot_Group, y = RRS, fill = Plot_Group)) +
-  geom_boxplot(width = 0.5, outlier.shape = NA, color = "black", linewidth = 0.5, alpha = 0.8) +
-  geom_jitter(aes(color = Plot_Group), width = 0.12, size = 2, alpha = 0.7, show.legend = FALSE) +
-  stat_summary(fun = median, geom = "point", shape = 21, size = 2.2, fill = "black", color = "black") +
+  geom_boxplot(width = 0.5, outlier.shape = NA, color = "black", linewidth = 0.3, alpha = 0.8) +
+  geom_jitter(aes(color = Plot_Group), width = 0.12, size = 1, alpha = 0.7, show.legend = FALSE) +
+  stat_summary(fun = median, geom = "point", shape = 21, size = 1.5, fill = "black", color = "black") +
   scale_y_continuous(limits = c(-1, 1.5)) +
   scale_fill_manual(values = group_colors) +
   scale_color_manual(values = group_colors) +
-  annotate("text", x = 1.25, y = -0.9, label = anova_label, size = 5) +
-  annotate("segment", x = 1, xend = 3, y = 1.25, yend = 1.25, linewidth = 0.5) +
-  annotate("segment", x = 1, xend = 1, y = 1.25, yend = 1.2, linewidth = 0.5) +
-  annotate("segment", x = 3, xend = 3, y = 1.25, yend = 1.2, linewidth = 0.5) +
-  annotate("text", x = 2, y = 1.4, label = holdout_t_label, size = 5) +
+  annotate("text", x = 2, y = -0.9, label = anova_label, size = 2.5) +
+  annotate("segment", x = 1, xend = 3, y = 1.25, yend = 1.25, linewidth = 0.3) +
+  annotate("segment", x = 1, xend = 1, y = 1.25, yend = 1.2, linewidth = 0.3) +
+  annotate("segment", x = 3, xend = 3, y = 1.25, yend = 1.2, linewidth = 0.3) +
+  annotate("text", x = 2, y = 1.4, label = holdout_t_label, size = 2.5) +
   labs(title = "Heldout Test Cohort\n(AURORA)", x = NULL, y = "RRS") +
-  theme_minimal(base_size = 16) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid.minor = element_blank(),
     panel.grid.major.x = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    axis.text.x = element_text(face = "bold", size = 14, color = "black"),
-    axis.text.y = element_text(color = "black"),
-    axis.title.y = element_text(size = 16, margin = margin(r = 0), vjust = -0.25),
-    plot.title = element_text(face = "bold", hjust = 0.5),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+    axis.text.x = element_text(size = 7, color = "black"),
+    axis.text.y = element_text(color = "black", size = 7),
+    axis.title.y = element_text(size = 7, margin = margin(r = 0), vjust = -0.25),
+    plot.title = element_text(hjust = 0.5, size = 7),
     legend.position = "none")
 
 p_holdout
@@ -702,18 +695,18 @@ RRS_ROC <- ggplot(roc_df, aes(x = fpr, y = tpr, color = APNS)) +
     y = "True Positive Rate",
     color = NULL,
     title = "ROC Curves for Chronic Class\nPrediction across APNS (n = 245) ") +
-  theme_minimal(base_size = 16) +
+  theme_minimal(base_size = 7) +
   guides(color = guide_legend(override.aes = list(linewidth = 2.5))) +
   theme(
     panel.grid.minor = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    axis.text = element_text(color = "black", size = 14),
-    axis.title = element_text(color = "black", size = 16),
-    plot.title = element_text(face = "bold", hjust = 0.5),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+    axis.text = element_text(color = "black", size = 7),
+    axis.title = element_text(color = "black", size = 7),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 7),
     plot.title.position = "plot", 
-    legend.text = element_text(size = 15, color = "black"),
+    legend.text = element_text(size = 7, color = "black"),
     legend.key.height = unit(1.2, "lines"),
-    legend.title =  element_text(size = 13, color = "black", face = "bold", hjust = 0.5),
+    legend.title =  element_text(size = 7, color = "black", face = "bold", hjust = 0.5),
     legend.margin = margin(t = 0, r = 0, b = 0, l = -5))
 
 RRS_ROC
@@ -740,14 +733,14 @@ RRS_AUC <- auc_tbl %>%
     y = NULL,
     title = "RRS Discrimination of Chronic APNS\nAcross Symptom Domains (n = 245)"
   ) +
-  theme_minimal(base_size = 16) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid.minor = element_blank(),
     panel.grid.major.y = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    axis.text = element_text(color = "black", size = 14),
-    axis.title.x = element_text(color = "black", size = 16),
-    plot.title = element_text(face = "bold", hjust = 0.5, vjust = 1)#,
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+    axis.text = element_text(color = "black", size = 7),
+    axis.title.x = element_text(color = "black", size = 7),
+    plot.title = element_text(hjust = 0.5, vjust = 0, size = 7)#,
    # plot.title.position = "plot"
   )
 
@@ -815,7 +808,7 @@ APNS_anova_results <- APNS_anova_results %>%
   mutate(FDR = p.adjust(P_value, method = "BH")) %>%
   arrange(match(APNS, APNS_ordered))
 
-write.csv(APNS_anova_results, "RNA-based Recovery Score Final/RRS association with APNS latent classes.csv", row.names = FALSE)
+write.csv(APNS_anova_results, "RNA-based Recovery Score/RRS association with APNS latent classes.csv", row.names = FALSE)
 
 
 ```
@@ -844,7 +837,7 @@ APNS_posthoc_results <- map(APNS_ordered, function(APNS) {
 
 
 # save
-write.csv(APNS_posthoc_results,"RNA-based Recovery Score Final/Post-hoc RRS association tests with APNS latent classes.csv",
+#write.csv(APNS_posthoc_results,"RNA-based Recovery Score Final/Post-hoc RRS association tests with APNS latent classes.csv",
           row.names = FALSE)
 
 ```

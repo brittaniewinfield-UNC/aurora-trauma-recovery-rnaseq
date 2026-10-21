@@ -10,23 +10,23 @@ format:
 
 ```{r}
 #| label: setup
-#| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+#| include: false 
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root) 
 ```
 
-<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
+This script loads the packages used throughout the pipeline and defines a
+small set of shared helpers: a number formatter for consistent reporting, and 
+the ordering of the ten APNS used to keep figures and tables consistently
+ordered across the rest of the repo.
 
-<!-- ---- original lines 1-31 ---- -->
+# Libraries
 
-# BASICS 
-
-## Libraries 
 ```{r}
 library(readr)
 library(dplyr)
@@ -39,20 +39,26 @@ library(broom)
 library(dorothea)
 ```
 
-## Helpers/Constants 
+# Helpers and constants
+
+`format_num()` formats a numeric value for display in tables: scientific
+notation for very small values, three decimal places otherwise.
+
 ```{r}
 format_num <- function(x) {
   ifelse(
     is.na(x), NA,
     ifelse(abs(x) < 0.001 & x != 0,
-           formatC(x, format = "e", digits = 2),   # scientific for very small
-           formatC(x, format = "f", digits = 3)))}   # fixed 3 decimals otherwise
-
-
-APNS_ordered <- c("Pain","Avoidance","Reexperience","Hyperarousal",
-                  "Anxious","Somatic","MentalFatigue","Depression","Nightmare","Sleep")
-
+           formatC(x, format = "e", digits = 2), # scientific for very small
+           formatC(x, format = "f", digits = 3)))} # fixed 3 decimals otherwise
 ```
 
+`APNS_ordered` sets the display order of the ten symptom domains, reused
+by downstream scripts to keep plots and tables consistent.
 
+```{r}
+APNS_ordered <- c("Pain","Avoidance","Reexperience","Hyperarousal",
+                  "Anxious","Depression","Somatic","MentalFatigue",
+                  "Nightmare","Sleep")
 
+```

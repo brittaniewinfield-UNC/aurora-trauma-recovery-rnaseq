@@ -11,24 +11,21 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 ```
 
-<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
-
-<!-- ---- original lines 1342-1731 ---- -->
 
 # CELL FRACTIONS 
 
 ## Within class 
 ```{r}
-cell_fractions <- read.csv("Data/Cibersort Data/Analysis Data/Cibersort_Arcsin_Estimated_Cell_Fractions_ED2WK6M_120_3-23-2026.csv")
+cell_fractions <- read.csv("Data/Cibersort Data/Analysis Data/Cibersort_arcsin_estimated_cell_fractions_ED2WK6M_analysis.csv")
 
 
 cell_df <- cell_fractions %>%
@@ -127,7 +124,7 @@ for(i in seq_len(nrow(sheet_order))) {
   add_sheet_with_data(wb, sheet_name, sheet_data)
 }
 
-saveWorkbook(wb, "2WK Analyses/Cell Proportions/Within Group Longitudinal Tests/EDWK2M6_cells_within_class_results.xlsx", overwrite = TRUE)
+saveWorkbook(wb, "2WK Analyses/Cell Fractions/EDWK2M6_cells_within_class_results.xlsx", overwrite = TRUE)
 
 
 
@@ -181,157 +178,16 @@ cell_interval_results_export <- cell_interval_results %>%
 
 
 
-write.csv(cell_interval_results_export, "2WK Analyses/Cell Proportions/Within Group Longitudinal Tests/EDWK2M6_cell_within_results_class.csv")
+write.csv(cell_interval_results_export, "2WK Analyses/Cell Fractions/EDWK2M6_cell_within_results_class.csv")
 ```
 
-## Between class 
-```{r}
-cell_delta_results <- purrr::map_dfr(
-  unique(cell_delta$CellType),
-  function(ct) {
-
-    df_ct <- cell_delta %>% filter(CellType == ct)
-
-    bind_rows(
-      run_delta_test(df_ct, "delta_ED_WK2") %>%
-        mutate(Comparison = "ED_vs_WK2"),
-      run_delta_test(df_ct, "delta_WK2_M6") %>%
-        mutate(Comparison = "WK2_vs_M6"), 
-      run_delta_test(df_ct, "delta_ED_M6") %>%
-        mutate(Comparison = "ED_vs_M6")
-    ) %>%
-      mutate(CellType = ct, .before = 1)
-  }
-) %>%
-  group_by(Comparison) %>%
-  mutate(FDR = p.adjust(`P Value`, method = "BH")) %>%
-  ungroup() %>%
-  arrange(`P Value`)
-
-
-cells_between_sheets <- list(
-  ED_vs_WK2 = cell_delta_results %>%
-    filter(Comparison == "ED_vs_WK2") %>%
-    arrange(`P Value`),
-  WK2_vs_M6 = cell_delta_results %>%
-    filter(Comparison == "WK2_vs_M6") %>%
-    arrange(`P Value`),
-  ED_vs_M6 = cell_delta_results %>%
-    filter(Comparison == "ED_vs_M6") %>%
-    arrange(`P Value`))
-
-wb <- createWorkbook()
-
-header_style <- createStyle(textDecoration = "bold", halign = "center")
-body_style   <- createStyle(halign = "center")
-
-add_sheet_with_data <- function(wb, sheet_name, data) {
-  addWorksheet(wb, sheet_name)
-  writeData(wb, sheet = sheet_name, data)
-
-  addStyle(wb, sheet = sheet_name, header_style,
-           rows = 1, cols = seq_len(ncol(data)), gridExpand = TRUE)
-
-  if(nrow(data) > 0) {
-    addStyle(wb, sheet = sheet_name, body_style,
-             rows = 2:(nrow(data) + 1), cols = seq_len(ncol(data)), gridExpand = TRUE)
-  }
-
-  setColWidths(wb, sheet = sheet_name, cols = seq_len(ncol(data)), widths = "auto")
-}
-
-purrr::iwalk(
-  cells_between_sheets,
-  ~ add_sheet_with_data(wb, sheet_name = .y, data = .x))
-
-saveWorkbook(wb, "2WK Analyses/Cell Proportions/Between Group Change Score Tests/EDWK2M6_cells_between_class_results.xlsx", overwrite = TRUE)
-
-
-
-```
-
-## Figure 6e
-```{r}
-cells_plot <- c("Neutrophils", "Monocytes", "Macrophages.M2", "T.cells.CD4.memory.resting", "T.cells.CD8", "B.cells.naive", "NK.cells.activated",  "NK.cells.resting", "T.cells.regulatory..Tregs.",  "Plasma.cells",  "B.cells.memory",  "T.cells.CD4.naive")
-
-plot_df_cells <- cell_long %>%
-  filter(RRS_median_group %in% c("High_RRS", "Low_RRS"),
-         Timepoint %in% c("ED", "WK2", "M6"),
-         CellType %in% cells_plot) %>%
-  mutate(
-    Timepoint = factor(Timepoint, levels = c("ED", "WK2", "M6")),
-    RRS_median_group = factor(
-      RRS_median_group,
-      levels = c("Low_RRS", "High_RRS"),
-      labels = c("Low RRS", "High RRS")),
-    CellType = recode(
-      CellType,
-      "Neutrophils" = "Neutrophils",
-      "Monocytes" = "Monocytes",
-      "Macrophages.M2" = "M2 Macrophages",
-      "T.cells.CD4.memory.resting" = "Resting Memory\nCD4+ T cells",
-      "T.cells.CD8" = "CD8+ T cells",
-      "B.cells.naive" = "Naive B cells",
-      "NK.cells.activated"= "Activated NK cells",
-      "NK.cells.resting" = "Resting NK cells",
-      "T.cells.regulatory..Tregs." = "Regulatory T cells", 
-      "Plasma.cells" = "Plasma cells", 
-      "B.cells.memory" = "Memory B cells", 
-      "T.cells.CD4.naive" = "Naive CD4+ T cells"),
-    CellType = factor(CellType, 
-                      levels = c("Neutrophils", "Monocytes", "M2 Macrophages", "Regulatory T cells",
-                                 "Resting Memory\nCD4+ T cells", "Naive CD4+ T cells", "CD8+ T cells",
-                                 "Activated NK cells", "Resting NK cells", "Naive B cells",  
-                                 "Memory B cells",  "Plasma cells"))) %>%
-  group_by(RRS_median_group, Timepoint, CellType) %>%
-  summarise(mean_fraction = mean(Fraction, na.rm = TRUE),
-            se = sd(Fraction, na.rm = TRUE) / sqrt(sum(!is.na(Fraction))),
-            .groups = "drop")
-
-
-
-
-cell_fraction_plot <- ggplot(plot_df_cells,aes(x = Timepoint, y = mean_fraction, 
-                                               group = RRS_median_group, color = RRS_median_group)) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 3.2) +
-  geom_errorbar(aes(ymin = mean_fraction - se, ymax = mean_fraction + se),
-                width = 0.08,linewidth = 0.7) +
-  facet_wrap(~ CellType, scales = "free_y", ncol = 6) +
-  scale_color_manual(values = c("Low RRS" = "firebrick4", "High RRS" = "cyan3")) +
-  labs(x = NULL, y = "Cell Fraction", color = NULL) +
-  scale_y_continuous(breaks = function(x) {r <- range(x, na.rm = TRUE)
-                     seq(r[1] + 0.06 * diff(r), r[2] - 0.06 * diff(r), length.out = 3)},
-                     labels = function(x) sprintf("%.2f", x)) +
-  theme_minimal(base_size = 16) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
-    axis.text.x = element_text(color = "black", size = 14),
-    axis.title = element_text(color = "black", size = 16),
-    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
-    legend.position = "bottom",
-    legend.text = element_text(size = 14),
-    legend.key.width = unit(1.5, "lines"), 
-    panel.spacing.y = unit(0.3, "lines"), 
-    axis.ticks.length = unit(0, "pt"),
-    legend.margin = margin(t = -8),
-    legend.box.margin = margin(t = -8),
-    plot.margin = margin(t=15, b = 15))+
-  guides(color = guide_legend(override.aes = list(linewidth = 1.8, size = 5)))
-
-cell_long
-```
-
-## Figure 6e v2
+## Figure 
 ```{r}
 cells_plot <- c("Neutrophils", "Monocytes", "Macrophages.M2", "T.cells.CD4.memory.resting", "B.cells.naive","NK.cells.resting")
 
 cells_plot <- c("Neutrophils", "T.cells.regulatory..Tregs.", "NK.cells.activated", "T.cells.CD8", "Monocytes","B.cells.naive")
 
-cells_plot <- unique(cell_long$CellType)
+#cells_plot <- unique(cell_long$CellType)
 
 plot_df_cells <- cell_long %>%
   filter(RRS_median_group %in% c("High_RRS", "Low_RRS"),
@@ -378,10 +234,10 @@ plot_df_cells <- cell_long %>%
 
 cell_fraction_plot <- ggplot(plot_df_cells,aes(x = time_days, y = mean_fraction, 
                                                group = RRS_median_group, color = RRS_median_group)) +
-  geom_line(linewidth = 2) +
-  geom_point(size = 3.2) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
   geom_errorbar(aes(ymin = mean_fraction - se, ymax = mean_fraction + se),
-                width = 0.08,linewidth = 0.7) +
+                width = 0.08,linewidth = 0.5) +
   facet_wrap(~ CellType, scales = "free_y", ncol = 3) +
   scale_color_manual(values = c("Low RRS" = "#8D1946", "High RRS" = "#2A93B5")) +
   labs(x = NULL, y = "Cell Fraction", color = NULL) +
@@ -393,23 +249,23 @@ cell_fraction_plot <- ggplot(plot_df_cells,aes(x = time_days, y = mean_fraction,
     breaks = c(25, 50, 160),
     labels = c("", "", ""),
     expand = expansion(mult = c(0.04, 0.04))) +
-  theme_minimal(base_size = 16) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid.minor = element_blank(),
     panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
-    axis.text.x = element_text(color = "black", size = 14),
-    axis.title = element_text(color = "black", size = 16),
-    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+    strip.text = element_text(face = "plain", size = 7, margin = margin(b = 2)),
+    axis.text.x = element_text(color = "black", size = 7),
+    axis.title = element_text(color = "black", size = 7),
+    axis.text.y.left = element_text(color = "black", size = 7, margin = margin(r = 1)),
     legend.position = "none",
-    legend.text = element_text(size = 14),
+    legend.text = element_text(size = 7),
     legend.key.width = unit(1.5, "lines"), 
-    panel.spacing.y = unit(1, "lines"), 
+    panel.spacing.y = unit(0.3, "lines"), 
     axis.ticks.length = unit(0, "pt"),
     legend.margin = margin(t = -8),
     legend.box.margin = margin(t = -8),
-    plot.margin = margin(t=15, b = 15)) 
+    plot.margin = margin(t=5, b = 5)) 
 ```
 
 

@@ -11,25 +11,20 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root) o
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 all_DEA_results <- read_checkpoint("all_DEA_results")
 DEA_results_recovered <- read_checkpoint("DEA_results_recovered")
-# unpacks line_pain, line_avoidance, ... (ten trajectory plots from 03)
 list2env(read_checkpoint("trajectory_lines"), envir = .GlobalEnv)
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
-<!-- A grant-prep-only subsection ('Sarah grant 9-25', original lines 1963-2220, subsetting volcano plots to Pain + Moderate Recovery) was intentionally excluded here per author decision -- it is not part of the manuscript's reported analyses. -->
-
-<!-- ---- original lines 1644-1962 ---- -->
 
 # DEG HEATMAP
 Recovered-group differential expression results were used to identify genes with the strongest longitudinal shifts between ED and 6-month timepoints. For each gene, average log2 fold change and absolute log2 fold change were computed across recovered contrasts. Genes with uncharacterized identifiers (prefixes ENSG or LINC) were excluded. The top 15 genes with the most negative average log2 fold change (ED-up) and the top 15 with the most positive average log2 fold change (M6-up) were selected, and their union (30 genes) was carried forward.
@@ -99,19 +94,19 @@ DEG_hm <- expand_grid(
 lim <- max(abs(DEG_hm$logFC), na.rm = TRUE)
 
 DEG_heatmap <- ggplot(DEG_hm, aes(x = Gene, y = APNS)) +
-  geom_point(shape = 21, size = 3, fill = "white", color = "grey75", stroke = 0.35) +
+  geom_point(shape = 21, size = 2, fill = "white", color = "grey75", stroke = 0.25) +
   
   geom_point(aes(size = if_else(!is.na(FDR) & FDR <= 0.01, neglogFDR_cap, NA_real_),
                  fill = if_else(!is.na(FDR) & FDR <= 0.01, logFC, NA_real_)),
-                 shape = 21, color = "grey20", stroke = 0.5, na.rm = TRUE) +
-  
-  scale_size_area(name = "-log10(FDR)", max_size = 10,
-                  limits = c(2, 10),
-                  breaks = c(2, 6, 10), 
-                  labels = c("2", "6", ">10")) +
+                 shape = 21, color = "grey20", stroke = 0.25, na.rm = TRUE) +
+scale_size_area(name = "-log10(FDR)", max_size = 5,
+                limits = c(2, 10),
+                breaks = c(2, 6, 10), 
+                labels = c("2", "6", ">10"),
+                guide = "none") +
   
   scale_fill_gradient2(
-  name = "log2FC\n(ED → 6M)",
+  name = "expression\nlog2FC\n(ED → 6M)",
   low = "#006A98",     # higher at ED
   mid = "white",
   high = "#67B6B2",    # higher at 6M
@@ -124,31 +119,30 @@ DEG_heatmap <- ggplot(DEG_hm, aes(x = Gene, y = APNS)) +
   
   guides(fill = guide_colorbar(title.position = "top",
                                title.hjust = 0.5,
-                               barheight = unit(2.25, "cm"),
-                               barwidth = unit(0.6, "cm"),
+                               barheight = unit(1.5, "cm"),
+                               barwidth = unit(0.5, "cm"),
                                title.theme = element_text(
-                                 size = 11,
-                                 margin = margin(b = 8))),
-         size = guide_legend(order = 1)) +
+                                 size = 7,
+                                 margin = margin(b = 8)))) +
 
   labs(y = NULL, x = NULL, title = NULL) +
-  theme_minimal(base_size = 12) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid = element_line(size = 0.5),
     axis.text.x.top = element_text(angle = 45, hjust = 0, vjust = 0,
-                                   size = 11, color = "black",face = "italic", margin = margin(b=0)),
+                                   size = 6, color = "black",face = "italic", margin = margin(b=0)),
     axis.ticks.x.top = element_line(color = "black", linewidth = 0.5),
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
     
-    axis.text.y = element_text(size = 12, color = "black"),
-    axis.title = element_text(size = 14, color = "black", face = "bold"),
+    axis.text.y = element_text(size = 7, color = "black"),
+    axis.title = element_blank(),
     
     legend.margin = margin(t = -5, r = 0, b = 0, l = 0),
     legend.title = element_text(hjust = 0.5, size = 11),
-    legend.text  = element_text(size = 11), 
+    legend.text  = element_text(size = 7), 
   
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.75)) +
 
   scale_x_discrete(limits = genes_top30, position = "top",
                    expand = expansion(mult = c(.03, .03))) +
@@ -156,7 +150,7 @@ DEG_heatmap <- ggplot(DEG_hm, aes(x = Gene, y = APNS)) +
   scale_y_discrete(expand = expansion(mult = c(.07, .07)), 
                    labels = setNames(APNS_ordered, APNS_ordered))
 
-#ggsave(DEG_heatmap, filename = "Differential Expression Analyses/Plots/DEG Heatmap Recovered.jpg", width = 10, height = 4, dpi = 300)
+ggsave(DEG_heatmap, filename = "Differential Expression Analyses/Plots/DEG Heatmap Recovered.jpg", width = 10, height = 4, dpi = 300)
 ```
 
 
@@ -177,7 +171,7 @@ create_volcano_plot <- function(data, category_name, class_name,
   ggplot(data, aes(x = logFC, y = -log10(adj.P.Val))) +
     
   geom_point(aes(color = ifelse(adj.P.Val < pval_threshold, Class, 
-  "Below Threshold")), size = 1.5, stroke = 0.5, shape = 19,  alpha = 0.4) +
+  "Below Threshold")), size = 0.5, stroke = 0.5, shape = 19,  alpha = 0.5) +
     
     # add FDR threshold line
     geom_hline(yintercept = -log10(pval_threshold),
@@ -190,7 +184,7 @@ create_volcano_plot <- function(data, category_name, class_name,
     # colors
     scale_color_manual(
       values = c("Low" = "#AAA8B3", 
-                                  "Moderate Recovery" = "cyan", 
+                                  "Moderate Recovery" = "#858290", 
                                   "Moderate" = "#514D5B", 
                                   "High" = "#0B090D", 
                  "Below Threshold" = "#D7D9DF")) +
@@ -199,13 +193,15 @@ create_volcano_plot <- function(data, category_name, class_name,
     labs(title = title, x = NULL, y = NULL) +
     theme_minimal() +
     theme(
-      plot.title = element_text(size = 12,color = "transparent",
-                                hjust = 0.5,margin = margin(b = 2)),
+      plot.title = element_text(size = 5,color = "transparent",
+                                hjust = 0.5,margin = margin(b = 0)),
       axis.title = element_blank(),
-      axis.text = element_text(size = 12, color = "black"),
-      panel.border = element_rect(color = "black", size = 1, fill = NA), 
+      axis.text.y = element_text(size = 7, color = "black", hjust = 1.15),
+       axis.text.x = element_text(size = 7, color = "black",vjust = 2),
+      panel.border = element_rect(color = "black", size = 0.75, fill = NA), 
       legend.position = "none", 
-      plot.margin = margin(t = 1, r = 3, b = 1, l = 3, unit = "pt"))
+      axis.ticks.length.y = unit(0, "pt"),
+      plot.margin = margin(t = 1, r = 2, b = 1, l = 2, unit = "pt"))
 }
 
 
@@ -235,9 +231,9 @@ for (apns in APNS_ordered) {
   if (recovered_key %in% names(all_plots)) {
     bordered_plots[[paste0(recovered_key, "_border")]] <-
       all_plots[[recovered_key]] +
-      theme(panel.border = element_rect(color = "#2A93B5", size = 4, fill = NA), 
-             plot.title = element_text(size = 12, color = "black", hjust = 0.5,
-                                       margin = margin(b = 2)))
+      theme(panel.border = element_rect(color = "#2A93B5", size = 2, fill = NA), 
+             plot.title = element_text(size = 6, color = "black", hjust = 0.5,
+                                       margin = margin(b = 1)))
   }
 
   # chronic group for this APNS
@@ -247,9 +243,9 @@ for (apns in APNS_ordered) {
   if (chronic_key %in% names(all_plots)) {
     bordered_plots[[paste0(chronic_key, "_border")]] <-
       all_plots[[chronic_key]] +
-      theme(panel.border = element_rect(color = "#8D1946", size = 4, fill = NA), 
-            plot.title = element_text(size = 12, color = "black", hjust = 0.5,
-                                       margin = margin(b = 2)))
+      theme(panel.border = element_rect(color = "#8D1946", size = 2, fill = NA), 
+            plot.title = element_text(size = 6, color = "black", hjust = 0.5,
+                                       margin = margin(b = 1)))
   }
 }
 ```
@@ -351,8 +347,6 @@ sleep_high_bord <- bordered_plots[["Sleep_High_border"]]
 
 
 
-<!-- ---- original lines 2221-2406 ---- -->
-
 ## Add trajectories to volcanoes 
 Trajectory–volcano panel assembly: Latent-class trajectory plots and volcano plots were combined into a unified 10×5 grid (one row per APNS domain). For each APNS, a list was constructed containing the domain’s trajectory plot followed by the four class-specific volcano plots (Low, Moderate Recovery, Moderate, High), with recovered and chronic classes marked by cyan and firebrick borders, respectively. Helper functions computed the maximum −log10(FDR) within each APNS row and applied a shared y-axis range and breaks across that row’s volcano plots to standardize vertical scaling. The resulting trajectory plus aligned volcano plots were concatenated row-wise in APNS order and arranged into a 5-column × 10-row layout, then exported as a high-resolution figure for downstream illustration.
 ```{r}
@@ -389,34 +383,6 @@ get_max_volcano_y <- function(vol_list) {
 }
 
 align_volcano_y <- function(vol_list) {
-  max_y <- get_max_volcano_y(vol_list)
-  max_y <- max_y + 0.75
-  if (!is.finite(max_y)) max_y <- 2
-
-  upper <- ceiling(max_y)
-  if (upper %% 2L != 0L) upper <- upper + 1L
-  breaks <- c(0, round(upper/2), upper)
-
-  lapply(vol_list, function(p) {
-    if (!is.null(p$data) && "adj.P.Val" %in% names(p$data)) {
-      p + p + scale_y_continuous(
-  limits = c(0, upper),
-  breaks = breaks,
-  labels = function(x) {
-    ifelse(
-      x < 10,
-      paste0("\u2007", x),  # figure-space before single digits
-      as.character(x)
-    )
-  }
-)
-    } else {
-      p
-    }
-  })
-}
-
-align_volcano_y <- function(vol_list) {
   
   max_y <- get_max_volcano_y(vol_list)
   max_y <- max_y + 0.75
@@ -428,12 +394,13 @@ align_volcano_y <- function(vol_list) {
 
   breaks <- c(0, round(upper / 2), upper)
 
-  # Only pad labels when the entire axis is single-digit
-  if (upper < 10) {
-    y_labels <- function(x) sprintf("%2.0f", x)
-  } else {
-    y_labels <- function(x) as.character(x)
-  }
+  y_labels <- function(x) {
+      parse(text = ifelse(
+        x < 10,
+        paste0("phantom(0)*", x),
+        as.character(x)
+      ))
+    }
 
   lapply(vol_list, function(p) {
     if (!is.null(p$data) && "adj.P.Val" %in% names(p$data)) {
@@ -450,6 +417,7 @@ align_volcano_y <- function(vol_list) {
   })
 }
 
+
 # align volcanoes within each APNS row and flatten to 10×5 grid 
 rows_aligned <- lapply(apns_outcomes_traj_vol, function(plist) {
   traj <- plist[[1]]
@@ -464,7 +432,13 @@ combined_plots <- unlist(rows_aligned, recursive = FALSE)
 # tighten margins a bit
 combined_plots <- lapply(
   combined_plots,
-  function(p) p + theme(plot.margin = margin(t = 0, r = 1, b = 0, l = 1)))
+  function(p) p + theme(
+    plot.margin = margin(t = 0, r = 2, b = 0, l = 2),
+    axis.text.y.left = element_text( margin = margin(r = 2)),
+    axis.text.x.bottom = element_text(margin = margin(t = 3))
+  )
+)
+
 
 
 plot <- ggarrange(
@@ -479,7 +453,7 @@ plot <- ggarrange(
 ```
 
 
-## Figure 2
+## Figure 1
 ```{r}
 blank_plot <- ggplot() + theme_void()
 combined_plots2 <- lapply(combined_plots, function(p) if (is.null(p)) blank_plot else p)
@@ -494,51 +468,40 @@ row_grobs <- lapply(seq_len(10), function(i) {
     plotlist = combined_plots2[idx],
     ncol = 5,
     nrow = 1,
-    align = "h",
-    widths = c(0.9, 1, 1, 1, 1)
+    align = "hv",
+    widths = c(1.15, 1, 1, 1, 1)
   ) +
     theme(
-      plot.margin = margin(t = 10, r = 5, b = 0, l = 15)
+      plot.margin = margin(t = 3, r = 1, b = 0, l = 0)
     )
 
   
 ggdraw(row_plot) +
   draw_label(
     paste0(letters[i], ""),
-    x = 0.005,
-    y = 1,
+    x = 0,
+    y = 1.07,
     hjust = 0,
-    vjust = 1.1,
+    vjust = 1.55,
     fontface = "bold",
-    size = 20
+    size = 9
   ) +
   draw_label(
     APNS_labels[i],
-    x = 0.045,   # fixed starting position for every APNS title
-    y = 1,
+    x = 0.03,   
+    y = 1.025,
     hjust = 0,
-    vjust = 1.65,
-    fontface = "bold",
-    size = 13
+    vjust = 1.55,
+    size = 7
   )
 })
 
 
-
-
-
-
-
-
-
 plot <- ggarrange(plotlist = row_grobs, ncol = 1, nrow = 10, align = "hv",  heights = rep(1, 10))
 
-ggsave(plot, filename="Figures/v8 (new colors) - Figure 2 APNS Volcano Plot.jpg", width = 6.5, height = 12, units = "in", dpi = 600)
+ggsave(plot, filename= "Differential Expression Analyses/Plots/APNS Volcano Plot.jpg", width = 88, height = 160, units = "mm", dpi = 600)
 
 ```
-
-
-
 
 
 ```{r}

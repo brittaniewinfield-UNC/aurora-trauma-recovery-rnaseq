@@ -11,18 +11,15 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root) 
 ```
 
-<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 471-573 ---- -->
 
 # PID / INVENTORY CODES 
 
@@ -56,7 +53,8 @@ PIDs_40_ED2WK6M <- Metadata_Analysis_RNA_paired %>%
   filter(n_timepoints == 3) %>%
   pull(PID)
 
-write.csv(PIDs_40_ED2WK6M, "Data/Metadata/Analysis Data/PIDs_40_ED2WK6M.csv")
+# opportunity to write the list of ED-2WK-6M PIDs
+#write.csv(PIDs_40_ED2WK6M, "Data/Metadata/Analysis Data/PIDs_Paired_ED2WK6M.csv")
 
 length(PIDs_40_ED2WK6M) #40 
 
@@ -68,7 +66,8 @@ ICs_120_ED2WK6M <- Metadata_Analysis_RNA_paired %>%
 
 length(ICs_120_ED2WK6M)
 
-write.csv(ICs_120_ED2WK6M, "Data/Metadata/Analysis Data/ICs_120_ED2WK6M.csv")
+# opportunity to write the list of ED-2WK-6M Inventory codes
+#write.csv(ICs_120_ED2WK6M, "Data/Metadata/Analysis Data/ICs_Paired_ED2WK6M.csv")
 
 
 ```
@@ -80,7 +79,8 @@ write.csv(ICs_120_ED2WK6M, "Data/Metadata/Analysis Data/ICs_120_ED2WK6M.csv")
 RNA_manifest_analysis_ED6M <- RNA_manifest %>%
   filter(INVENTORY.CODE %in% ICs_490_ED6M)
 
-write.csv(RNA_manifest_analysis_ED6M, "Data/RNA Data/Analysis Data/RNA_manifest_V47_ED6M_490_3-23-2026.csv")
+# opportunity to write the list of ED-2WK-6M Inventory codes
+write.csv(RNA_manifest_analysis_ED6M, "Data/RNA Data/Analysis Data/RNA_manifest_ED6M_analysis.csv")
 
 ## Counts 
 AURORA_RNA_Seq_V47_counts_ED6M <- AURORA_RNA_Seq_V47_counts_clean %>%
@@ -88,7 +88,7 @@ AURORA_RNA_Seq_V47_counts_ED6M <- AURORA_RNA_Seq_V47_counts_clean %>%
 
 dim(AURORA_RNA_Seq_V47_counts_ED6M) # 490 x 19906
 
-write.csv(AURORA_RNA_Seq_V47_counts_ED6M, "Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_counts_ED6M_490_3-23-2026.csv")
+write.csv(AURORA_RNA_Seq_V47_counts_ED6M, "Data/RNA Data/Analysis Data/AURORA_RNAseq_counts_ED6M_analysis.csv")
 
 ## Log2 
 AURORA_RNA_Seq_V47_log2_ED6M <- AURORA_RNA_Seq_V47_log2_clean %>%
@@ -96,7 +96,7 @@ AURORA_RNA_Seq_V47_log2_ED6M <- AURORA_RNA_Seq_V47_log2_clean %>%
 
 dim(AURORA_RNA_Seq_V47_log2_ED6M) # 490 x 19906
 
-write.csv(AURORA_RNA_Seq_V47_log2_ED6M, "Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_log2_ED6M_490_3-23-2026.csv")
+write.csv(AURORA_RNA_Seq_V47_log2_ED6M, "Data/RNA Data/Analysis Data/AURORA_RNAseq_log2_ED6M_analysis.csv")
 
 ```
 
@@ -107,7 +107,7 @@ RNA_manifest_analysis_ED2WK6M <- RNA_manifest %>%
 
 dim(RNA_manifest_analysis_ED2WK6M) # 120 x 4
 
-write.csv(RNA_manifest_analysis_ED2WK6M, "Data/RNA Data/Analysis Data/RNA_manifest_V47_ED2WK6M_120_3-23-2026.csv")
+write.csv(RNA_manifest_analysis_ED2WK6M, "Data/RNA Data/Analysis Data/RNA_manifest_ED2WK6M_analysis.csv")
 
 ## Counts 
 AURORA_RNA_Seq_V47_counts_ED2WK6M <- AURORA_RNA_Seq_V47_counts_clean %>%
@@ -115,7 +115,7 @@ AURORA_RNA_Seq_V47_counts_ED2WK6M <- AURORA_RNA_Seq_V47_counts_clean %>%
 
 dim(AURORA_RNA_Seq_V47_counts_ED2WK6M) # 120 x 19906
 
-write.csv(AURORA_RNA_Seq_V47_counts_ED2WK6M, "Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_counts_ED2WK6M_120_3-23-2026.csv")
+write.csv(AURORA_RNA_Seq_V47_counts_ED2WK6M, "Data/RNA Data/Analysis Data/AURORA_RNAseq_counts_ED2WK6M_analysis.csv")
 
 ## Log2 
 AURORA_RNA_Seq_V47_log2_ED2WK6M <- AURORA_RNA_Seq_V47_log2_clean %>%
@@ -123,7 +123,7 @@ AURORA_RNA_Seq_V47_log2_ED2WK6M <- AURORA_RNA_Seq_V47_log2_clean %>%
 
 dim(AURORA_RNA_Seq_V47_log2_ED2WK6M) # 120 x 19906
 
-write.csv(AURORA_RNA_Seq_V47_log2_ED2WK6M, "Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_log2_ED2WK6M_120_3-23-2026.csv")
+write.csv(AURORA_RNA_Seq_V47_log2_ED2WK6M, "Data/RNA Data/Analysis Data/AURORA_RNAseq_log2_ED2WK6M_analysis.csv")
 
 ```
 

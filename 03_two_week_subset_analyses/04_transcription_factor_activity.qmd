@@ -11,18 +11,15 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root) 
 ```
 
-<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
-
-<!-- ---- original lines 858-1341 ---- -->
 
 # TRANSCRIPTION FACTOR ACTIVITY
 ```{r}
@@ -122,7 +119,7 @@ for(i in seq_len(nrow(sheet_order))) {
   add_sheet_with_data(wb, sheet_name, sheet_data)
 }
 
-saveWorkbook(wb, "2WK Analyses/TF Activity/Within Group Longitudinal Tests/EDWK2M6_TF_within_class_results.xlsx", overwrite = TRUE)
+saveWorkbook(wb, "2WK Analyses/TF Activity/EDWK2M6_TF_results.xlsx", overwrite = TRUE)
 
 
 TF_interval_results_export <- TF_interval_results %>%
@@ -155,7 +152,7 @@ TF_interval_results_export <- TF_interval_results %>%
 
 
 
-write.csv(TF_interval_results_export, "2WK Analyses/TF Activity/Within Group Longitudinal Tests/EDWK2M6_TF_within_results_class.csv")
+write.csv(TF_interval_results_export, "2WK Analyses/TF Activity//EDWK2M6_TF_results.csv")
 ```
 
 ### Overlap of Significant TFs
@@ -163,15 +160,15 @@ write.csv(TF_interval_results_export, "2WK Analyses/TF Activity/Within Group Lon
 
 TF_results_EDWK2 <- TF_interval_results %>%
   filter(Comparison == "ED_vs_WK2") %>%
-  arrange(RRS_median_group, p.value, abs(mean_change))
+  arrange(`RRS Group`, `P Value`, abs(`Avg Δ (WK2 − ED)`))
 
 TF_results_WK2M6 <- TF_interval_results %>%
   filter(Comparison == "WK2_vs_M6") %>%
-  arrange(RRS_median_group, p.value, abs(mean_change))
+  arrange(`RRS Group`, `P Value`, abs(`Avg Δ (M6 − WK2)`))
 
 TF_results_EDM6 <- TF_interval_results %>%
   filter(Comparison == "ED_vs_M6") %>%
-  arrange(p.value, abs(mean_change))
+  arrange(`P Value`, abs(`Avg Δ (M6 − ED)`))
 
 
 # significant TF names in each comparison
@@ -292,147 +289,14 @@ writeData(wb, "EDM6_only", EDM6_only_annot)
 addWorksheet(wb, "Shared")
 writeData(wb, "Shared", shared_annot)
 
-saveWorkbook(wb, "2WK Analyses/TF Activity/Within Group Longitudinal Tests/Significant_TF_overlap_across_intervals.xlsx", overwrite = TRUE)
+saveWorkbook(wb, "2WK Analyses/TF Activity/Significant_TF_overlap_across_intervals.xlsx", overwrite = TRUE)
 ```
 
-## Between Class 
+
+
+## Figure 
 ```{r}
-TF_delta <- TF_wide %>%
-  mutate(
-    delta_ED_WK2 = WK2 - ED,
-    delta_WK2_M6 = M6 - WK2, 
-    delta_ED_M6 = M6 - ED)
 
-TF_delta_results <- purrr::map_dfr(
-  unique(TF_delta$TF),
-  function(tf) {
-
-    df_ct <- TF_delta %>% filter(TF == tf)
-
-    bind_rows(
-      run_delta_test(df_ct, "delta_ED_WK2") %>%
-        mutate(Comparison = "ED_vs_WK2"),
-      run_delta_test(df_ct, "delta_WK2_M6") %>%
-        mutate(Comparison = "WK2_vs_M6"), 
-      run_delta_test(df_ct, "delta_ED_M6") %>%
-        mutate(Comparison = "ED_vs_M6")) %>%
-      mutate(TF = tf, .before = 1)
-  }) %>%
-  group_by(Comparison) %>%
-  mutate(FDR = p.adjust(`P Value`, method = "BH")) %>%
-  ungroup()
-
-TF_between_class <- TF_delta_results %>%
-  arrange((FDR))
-
-
-TF_between_sheets <- list(
-  ED_vs_WK2 = TF_between_class %>%
-    filter(Comparison == "ED_vs_WK2") %>%
-    arrange(FDR),
-  WK2_vs_M6 = TF_between_class %>%
-    filter(Comparison == "WK2_vs_M6") %>%
-    arrange(FDR),
-  ED_vs_M6 = TF_between_class %>%
-    filter(Comparison == "ED_vs_M6") %>%
-    arrange(FDR))
-
-wb <- createWorkbook()
-
-header_style <- createStyle(textDecoration = "bold", halign = "center")
-body_style   <- createStyle(halign = "center")
-
-add_sheet_with_data <- function(wb, sheet_name, data) {
-  addWorksheet(wb, sheet_name)
-  writeData(wb, sheet = sheet_name, data)
-
-  addStyle(wb, sheet = sheet_name, header_style,
-           rows = 1, cols = seq_len(ncol(data)), gridExpand = TRUE)
-
-  if(nrow(data) > 0) {
-    addStyle(wb, sheet = sheet_name, body_style,
-             rows = 2:(nrow(data) + 1), cols = seq_len(ncol(data)), gridExpand = TRUE)
-  }
-
-  setColWidths(wb, sheet = sheet_name, cols = seq_len(ncol(data)), widths = "auto")
-}
-
-purrr::iwalk(
-  TF_between_sheets,
-  ~ add_sheet_with_data(wb, sheet_name = .y, data = .x))
-
-saveWorkbook(wb, "2WK Analyses/TF Activity/Between Group Change Score Tests/EDWK2M6_TF_between_class_results.xlsx", overwrite = TRUE)
-
-```
-
-## Figure 6d
-```{r}
-selected_tfs <- c("TBX21","HIF1A","SPIB","IRF4","BACH1","MEF2C","MAF","CEBPA","MBD1","SPI1","NFKB1","RELA")
-selected_tfs <- c("SPI1","NFKB1","JUN","RELA","ATF3","ETS1","ESRRA","GATA2","KLF1","TBX21","MAF","TCF7")
-
-plot_df <- TF_analysis %>%
-  dplyr::filter(
-    RRS_median_group %in% c("Low_RRS", "High_RRS"),
-    Timepoint %in% c("ED", "WK2", "M6")) %>%
-  dplyr::select(PID, RRS_median_group, Timepoint, all_of(selected_tfs)) %>%
-  pivot_longer(
-    cols = all_of(selected_tfs),
-    names_to = "TF",
-    values_to = "TF_activity") %>%
-  mutate(
-    Timepoint = factor(Timepoint, levels = c("ED", "WK2", "M6")),
-    TF = factor(TF, levels = selected_tfs),
-    RRS_median_group = factor(
-      RRS_median_group,
-      levels = c("Low_RRS", "High_RRS"),
-      labels = c("Low RRS", "High RRS"))) %>%
-  group_by(RRS_median_group, Timepoint, TF) %>%
-  summarise(
-    mean_TF_activity = mean(TF_activity, na.rm = TRUE),
-    se = sd(TF_activity, na.rm = TRUE) / sqrt(sum(!is.na(TF_activity))),
-    .groups = "drop")
-
-tf_plot <- ggplot(
-  plot_df,
-  aes(x = Timepoint, y = mean_TF_activity, group = RRS_median_group, color = RRS_median_group)) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 3.2) +
-  geom_errorbar(aes(ymin = mean_TF_activity - se, ymax = mean_TF_activity + se), width = 0.08, linewidth = 0.7) +
-  facet_wrap(~ TF, scales = "free_y", ncol = 6) +
-  labs(x = NULL, y = "VIPER-inferred TF Activity", color = NULL) +
-  scale_y_continuous(
-    breaks = function(x) {
-      r <- range(x, na.rm = TRUE)
-      seq(r[1] + 0.06 * diff(r), r[2] - 0.06 * diff(r), length.out = 3)
-    },
-    labels = function(x) sprintf("%.2f", x)) +
-  scale_color_manual(values = c("Low RRS" = "firebrick4", "High RRS" = "cyan3")) +
-  theme_minimal(base_size = 16) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
-    axis.text.x = element_text(color = "black", size = 14),
-    axis.title = element_text(color = "black", size = 16),
-    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
-    legend.position = "bottom",
-    legend.text = element_text(size = 14),
-    legend.key.width = unit(1.5, "lines"),
-    panel.spacing.y = unit(0.3, "lines"),
-    axis.ticks.length = unit(0, "pt"), 
-      legend.margin = margin(t = -8),
-  legend.box.margin = margin(t = -8),
-  plot.margin = margin(t=15, b = 15))+
-  guides(color = guide_legend(override.aes = list(linewidth = 1.8, size = 5)))
-
-tf_plot
-```
-
-## Figure 6d v2 
-```{r}
-selected_tfs <- c("TBX21","HIF1A","SPIB","IRF4","BACH1","MEF2C",
-                  "MAF","CEBPA","MBD1","SPI1","NFKB1","RELA")
 
 selected_tfs <- c("SPI1","NFKB1","JUN","FOS","ETS1","ESRRA","GATA2","KLF1","TBX21","MAF","TCF7", "IRF4")
 
@@ -468,10 +332,10 @@ tf_plot <- ggplot(
   plot_df,
   aes(x = time_days, y = mean_TF_activity, 
       group = RRS_median_group, color = RRS_median_group)) +
-  geom_line(linewidth = 2) +
-  geom_point(size = 3.2) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
   geom_errorbar(aes(ymin = mean_TF_activity - se, ymax = mean_TF_activity + se), 
-                width = 4, linewidth = 0.7) +
+                width = 2, linewidth = 0.7) +
   facet_wrap(~ TF, scales = "free_y", ncol = 6) +
   scale_x_continuous(
     limits = c(0,180),
@@ -487,23 +351,23 @@ tf_plot <- ggplot(
     },
     labels = function(x) sprintf("%.2f", x)) +
   scale_color_manual(values = c("Low RRS" = "#8D1946", "High RRS" = "#2A93B5")) +
-  theme_minimal(base_size = 16) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid.minor = element_blank(),
     panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
-    axis.text.x = element_text(color = "black", size = 14),
-    axis.title = element_text(color = "black", size = 16),
-    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
+    strip.text = element_text(face = "plain", size = 7, margin = margin(b = 2)),
+    axis.text.x = element_text(color = "black", size = 7),
+    axis.title = element_text(color = "black", size = 7),
+    axis.text.y.left = element_text(color = "black", size = 7, margin = margin(r = 1)),
     legend.position = "none",
-    legend.text = element_text(size = 14),
+    legend.text = element_text(size = 7),
     legend.key.width = unit(1.5, "lines"),
-    panel.spacing.y = unit(1, "lines"),
+    panel.spacing.y = unit(0.5, "lines"),
     axis.ticks.length = unit(0, "pt"), 
     legend.margin = margin(t = -8),
     legend.box.margin = margin(t = -8),
-    plot.margin = margin(t = 15, b = 15)
+    plot.margin = margin(t = 2, b = 2)
   ) 
 ```
 

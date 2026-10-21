@@ -11,24 +11,21 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 ```
 
-<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
-
-<!-- ---- original lines 1732-2113 ---- -->
 
 # CYTOKINES 
 
 ## Within class
 ```{r}
-cytokine_data <- read.csv("Data/Cytokine Data/Analysis Data/Cytokine_Data_ED2WK6M_51_3-23-2026.csv")
+cytokine_data <- read.csv("Data/Cytokine Data/Analysis Data/Cytokine_Data_ED2WK6M_analysis.csv")
 
 cyto_df <- cytokine_data %>%
   mutate(PID = as.character(PID)) %>%
@@ -121,7 +118,7 @@ for(i in seq_len(nrow(sheet_order))) {
   add_sheet_with_data(wb, sheet_name, sheet_data)
 }
 
-saveWorkbook(wb, "2WK Analyses/Cytokines/Within Group Longitudinal Tests/EDWK2M6_cytokines_within_class_results.xlsx", overwrite = TRUE)
+saveWorkbook(wb, "2WK Analyses/Cytokines/EDWK2M6_cytokines_within_class_results.xlsx", overwrite = TRUE)
 
 cyto_interval_results_export <- cyto_interval_results %>%
   dplyr::rename(Interval = Comparison ,
@@ -153,164 +150,10 @@ cyto_interval_results_export <- cyto_interval_results %>%
   arrange(Interval, `RRS Group`, `P Value`)  %>%
     mutate(across(where(is.numeric), format_num))
 
-write.csv(cyto_interval_results_export, "2WK Analyses/Cytokines/Within Group Longitudinal Tests/EDWK2M6_cytokines_within_class_results.csv")
-```
-
-## Between class
-```{r}
-
-cyto_delta <- cyto_wide %>%
-  mutate(
-    delta_ED_WK2 = WK2 - ED,
-    delta_WK2_M6 = M6 - WK2, 
-    delta_ED_M6 = M6 - ED )
-
-cyto_delta_results <- purrr::map_dfr(
-  unique(cyto_delta$Cytokine),
-  function(cyto) {
-    df_cyto <- cyto_delta %>% filter(Cytokine == cyto)
-
-    bind_rows(
-      run_delta_test(df_cyto, "delta_ED_WK2") %>%
-        mutate(Comparison = "ED_vs_WK2"),
-      run_delta_test(df_cyto, "delta_WK2_M6") %>%
-        mutate(Comparison = "WK2_vs_M6"),
-      run_delta_test(df_cyto, "delta_ED_M6") %>%
-        mutate(Comparison = "ED_vs_M6")) %>%
-      mutate(Cytokine = cyto, .before = 1)
-  }
-) %>%
-  group_by(Comparison) %>%
-  mutate(FDR = p.adjust(`P Value`, method = "BH")) %>%
-  ungroup() %>%
-  arrange(`P Value`)
-
-cytokines_between_sheets <- list(
-  ED_vs_WK2 = cyto_delta_results %>%
-    filter(Comparison == "ED_vs_WK2") %>%
-    arrange(`P Value`),
-  WK2_vs_M6 = cyto_delta_results %>%
-    filter(Comparison == "WK2_vs_M6") %>%
-    arrange(`P Value`),
-  ED_vs_M6 = cyto_delta_results %>%
-    filter(Comparison == "ED_vs_M6") %>%
-    arrange(`P Value`))
-
-
-wb <- createWorkbook()
-
-header_style <- createStyle(textDecoration = "bold", halign = "center")
-body_style   <- createStyle(halign = "center")
-
-add_sheet_with_data <- function(wb, sheet_name, data) {
-  addWorksheet(wb, sheet_name)
-  writeData(wb, sheet = sheet_name, data)
-
-  addStyle(wb, sheet = sheet_name, header_style,
-           rows = 1, cols = seq_len(ncol(data)), gridExpand = TRUE)
-
-  if(nrow(data) > 0) {
-    addStyle(wb, sheet = sheet_name, body_style,
-             rows = 2:(nrow(data) + 1), cols = seq_len(ncol(data)), gridExpand = TRUE)
-  }
-
-  setColWidths(wb, sheet = sheet_name, cols = seq_len(ncol(data)), widths = "auto")
-}
-
-purrr::iwalk(
-  cytokines_between_sheets,
-  ~ add_sheet_with_data(wb, sheet_name = .y, data = .x))
-
-saveWorkbook(wb, "2WK Analyses/Cytokines/Between Group Change Score Tests/EDWK2M6_cytokines_between_class_results.xlsx", overwrite = TRUE)
-
-
+write.csv(cyto_interval_results_export, "2WK Analyses/Cytokines/EDWK2M6_cytokines_within_class_results.csv")
 ```
 
 ## Figure 6f
-```{r}
-selected_cytokines <- cyto_cols
-
-selected_cytokines <- c("IL_6", "TNF_alpha", "IFN_gama","IL_8", "IL_10")
-
-plot_df_cyto <- cyto_long %>%
-  filter(RRS_median_group %in% c("High_RRS", "Low_RRS"),
-         Timepoint %in% c("ED", "WK2", "M6"),
-         Cytokine %in% selected_cytokines) %>%
-  mutate(Timepoint = factor(Timepoint, levels = c("ED", "WK2", "M6")),
-         Cytokine = factor(Cytokine, levels = selected_cytokines),
-         RRS_median_group = factor(RRS_median_group,
-                                   levels = c("Low_RRS", "High_RRS"),
-                                   labels = c("Low RRS", "High RRS")), 
-         Cytokine = recode(Cytokine, "IFN_gama" = "IFN-γ",
-                           "IL_10" = "IL-10",
-                           "IL_6"  = "IL-6",
-                           "IL_8"  = "IL-8",
-                           "TNF_alpha" = "TNF-α")) %>%
-  group_by(RRS_median_group, Timepoint, Cytokine) %>%
-  summarise(
-    mean_value = mean(Value, na.rm = TRUE),
-    se = sd(Value, na.rm = TRUE) / sqrt(sum(!is.na(Value))),
-    .groups = "drop")
-
-cytokine_plot <- ggplot(
-  plot_df_cyto,
-  aes(
-    x = Timepoint,
-    y = mean_value,
-    group = RRS_median_group,
-    color = RRS_median_group
-  )
-) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 3.2) +
-  geom_errorbar(
-    aes(ymin = mean_value - se, ymax = mean_value + se),
-    width = 0.08,
-    linewidth = 0.7
-  ) +
-  facet_wrap(~ Cytokine, scales = "free_y", ncol = 5) +
-  labs(
-    x = NULL,
-    y = "Cytokine Level",
-    color = NULL
-  ) +
-  scale_y_continuous(
-    breaks = function(x) {
-      r <- range(x, na.rm = TRUE)
-      seq(r[1] + 0.06 * diff(r), r[2] - 0.06 * diff(r), length.out = 3)
-    },
-    labels = function(x) sprintf("%.2f", x)
-  ) +
-  scale_color_manual(values = c("Low RRS" = "firebrick4", "High RRS" = "cyan3")) +
-  theme_bw(base_size = 12) +
-  theme(
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
-    strip.background = element_blank(),
-    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
-    axis.text.x = element_text(color = "black", size = 14),
-    axis.title = element_text(color = "black", size = 16),
-    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
-    legend.position = "bottom",
-    legend.text = element_text(size = 15),
-    legend.key.width = unit(1.5, "lines"),
-    panel.spacing.y = unit(0.3, "lines"),
-    axis.ticks.length = unit(0, "pt"), 
-    legend.margin = margin(t = -5),
-    legend.box.margin = margin(t = -5), 
-    plot.margin = margin(t = 20))+
-  guides(
-    color = guide_legend(
-      override.aes = list(linewidth = 1.8, size = 5)
-    )
-  )
-
-cytokine_plot
-
-```
-
-## Figure 6f v2 
 ```{r}
 selected_cytokines <- cyto_cols
 
@@ -355,11 +198,11 @@ cytokine_plot <- ggplot(
     color = RRS_median_group
   )
 ) +
-  geom_line(linewidth = 2) +
-  geom_point(size = 3.2) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
   geom_errorbar(
     aes(ymin = mean_value - se, ymax = mean_value + se),
-    width = 4,
+    width = 2,
     linewidth = 0.7
   ) +
   facet_wrap(~ Cytokine, scales = "free_y", ncol = 5) +
@@ -382,18 +225,18 @@ cytokine_plot <- ggplot(
     labels = function(x) sprintf("%.2f", x)
   ) +
   scale_color_manual(values = c("Low RRS" = "#8D1946", "High RRS" = "#2A93B5")) +
-  theme_bw(base_size = 12) +
+  theme_bw(base_size = 7) +
   theme(
     panel.grid.minor = element_blank(),
     panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7),
     strip.background = element_blank(),
-    strip.text = element_text(face = "plain", size = 14, margin = margin(b = 2)),
-    axis.text.x = element_text(color = "black", size = 14),
-    axis.title = element_text(color = "black", size = 16),
-    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
+    strip.text = element_text(face = "plain", size = 7, margin = margin(b = 2)),
+    axis.text.x = element_text(color = "black", size = 7),
+    axis.title = element_text(color = "black", size = 7),
+    axis.text.y.left = element_text(color = "black", size = 7, margin = margin(r = 1)),
     legend.position = "none",
-    legend.text = element_text(size = 15),
+    legend.text = element_text(size = 7),
     legend.key.width = unit(1.5, "lines"),
     panel.spacing.x = unit(1, "lines"),
     axis.ticks.length = unit(0, "pt"), 

@@ -11,18 +11,16 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root) 
 ```
 
-<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 716-1047 ---- -->
 
 # HORMONES (ED only)
 
@@ -90,9 +88,6 @@ hormone_data_analysis <- hormones_clean %>%
   mutate(across(all_of(hormone_cols), ~ log2(.x + 1)))
 
 dim(hormone_data_analysis) #184, 22 
-
-#write.csv(hormone_data_analysis, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_ED_Data_Full_n273.csv", row.names = FALSE)
-
 ```
 
 ## Batch effects 
@@ -150,7 +145,7 @@ hormone_batch_plate_summary <- map_dfr(hormone_cols_safe, function(horm) {
   arrange(p.value) %>%
   mutate(Test = "ANOVA")
 
-#write_csv(hormone_batch_plate_summary, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_Batch_Effect_Summary_3-23-2026.csv")
+write_csv(hormone_batch_plate_summary, "Data/Steroid Hormone Data/Analysis Data/Steroid_hormone_batch_effect_summary.csv")
 
 ```
 
@@ -170,7 +165,7 @@ hormone_matrix_ED6M <- hormone_matrix_clean %>%
 dim(hormone_matrix_ED6M) # 184 x 22 
 length(unique(hormone_matrix_ED6M$PID)) # 184 
 
-write.csv(hormone_matrix_ED6M, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_ED_Data_184_3-23-2026.csv", row.names = FALSE)
+write.csv(hormone_matrix_ED6M, "Data/Steroid Hormone Data/Analysis Data/Steroid_hormone_data_ED_analysis.csv", row.names = FALSE)
 
 ```
 
@@ -228,7 +223,7 @@ hormone_stats_compare <- bind_rows(
   mutate(Scale = factor(Scale, levels = c("Raw", "Log2"))) %>%
   arrange(Hormone, Scale)
 
-write.csv(hormone_stats_compare, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_ED_Data_184_Stat_Summary_3-23-2026.csv", row.names = FALSE)
+write.csv(hormone_stats_compare, "Data/Steroid Hormone Data/Analysis Data/Steroid_hormone_data_ED_stat_summary.csv", row.names = FALSE)
 
 ```
 
@@ -238,7 +233,6 @@ write.csv(hormone_stats_compare, "Data/Steroid Hormone Data/Analysis Data/Steroi
 
 # E2 (ED, WK2 & M6) (sensitive assay)
 ```{r}
-
 
 E2_ED <- read.csv("Data/E2 Data/Data Files/Human_E2_ED_dataset.csv")
 E2_WK2 <- read.csv("Data/E2 Data/Data Files/Human_E2_WK2_dataset.csv") %>%
@@ -312,7 +306,7 @@ E2_ED_only <- E2_all %>%
   distinct(PID, .keep_all = TRUE)
 nrow(E2_ED_only) # 227
 
-write.csv(E2_ED_long, "Data/E2 Data/Analysis Data/E2_Data_Full_n227.csv")
+write.csv(E2_ED_long, "Data/E2 Data/Data Files/E2_Data_Full_n227.csv")
 
 
 E2_ED_M6_pids <- E2_all %>%
@@ -342,7 +336,7 @@ E2_ED_only_analysis <- E2_ED_only %>%
   filter(PID %in% ED_M6_paired_PIDs)
 length(unique(E2_ED_only_analysis$PID)) # 150
 
-write.csv(E2_ED_only_analysis, "Data/E2 Data/Analysis Data/E2_Data_ED26M_150_4-16-2026.csv")
+write.csv(E2_ED_only_analysis, "Data/E2 Data/Analysis Data/E2_data_ED_analysis.csv")
 
 E2_ED_M6_analysis <- E2_ED_M6 %>%
   filter(PID %in% ED_M6_paired_PIDs)

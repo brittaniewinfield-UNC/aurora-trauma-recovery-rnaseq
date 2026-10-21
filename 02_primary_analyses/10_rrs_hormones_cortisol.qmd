@@ -11,22 +11,19 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 meta_RRS_df <- read_checkpoint("meta_RRS_df")
 regression_results_df_plot <- read_checkpoint("regression_results_df_plot")
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 6553-6884 ---- -->
 
 # RRS + HORMONES
 A helper function fits univariate linear models of RRS on each hormone (RRS ~ hormone_x), returning both raw and standardized effect estimates with confidence intervals and R². Hormone measures are merged onto the RRS metadata by PID, and each hormone variable is run through this function in turn. The resulting association table is then FDR-corrected (BH) and sorted by adjusted p-value to highlight hormones most strongly related to the RRS.
@@ -78,8 +75,10 @@ run_regression_hormone <- function(var, data) {
 hormone_vars <- c(setdiff(names(hormone_data),
           c("PID", "SAMPLE.ID", "Sample.bar.code", "Tube.label", "Sample.volume..µL.")), "E2_sqrt")
 
-E2_data <- read.csv("Data/E2 Data/Analysis Data/E2_Data_ED26M_150_4-16-2026.csv") %>%
+E2_data <- read.csv("Data/E2 Data/Analysis Data/E2_data_ED_analysis.csv") %>%
   dplyr::select(PID, E2_sqrt)
+
+
 
 metadata_hormones <- meta_RRS_df %>%
   mutate(PID = as.character(PID)) %>%
@@ -232,7 +231,6 @@ hormone_results_export_adj <- hormone_results_df %>%
     `Sample Size` = Sample_Size) %>%
   mutate(across(where(is.numeric), ~ format_num(.x)))
 
-
 write.csv(hormone_results_export, "RRS Correlates/ED Hormones RRS Linear Regression Results Adjusted (age, BMI, sex).csv")
 
 
@@ -257,8 +255,8 @@ hormones_forest_data <- hormone_results_df %>%
   mutate(Variable = factor(Variable, levels = unique(Variable))) 
 hormone_forest_plot <- ggplot(hormones_forest_data, aes(x = Std_Coefficient, y = Variable)) +
   geom_errorbarh(aes(xmin = Std_CI_lower, xmax = Std_CI_upper, color = Color),
-                 height = 0.45, linewidth = 1.2) +
-  geom_point(aes(color = Color), size = 5) +
+                 height = 0.45, linewidth = 0.5) +
+  geom_point(aes(color = Color), size = 3) +
   scale_color_identity() +
   scale_x_continuous(limits = c(-0.6, 0.6), breaks = c(-0.5, 0, 0.5)) +
   geom_vline(xintercept = 0,
@@ -269,20 +267,21 @@ hormone_forest_plot <- ggplot(hormones_forest_data, aes(x = Std_Coefficient, y =
   labs(x = "Effect size (β)",
        y = "Hormone Levels at the ED") +
   theme(
-    axis.text = element_text(size = 12, color = "black"),
-    axis.text.x = element_text(size = 12, color = "black"),
-        axis.text.y = element_text(size = 12, color = "black"),
+    axis.text = element_text(size = 7, color = "black"),
+    axis.text.x = element_text(size = 7, color = "black"),
+        axis.text.y = element_text(size = 7, color = "black"),
 
-    axis.title.x = element_text(size = 12, color = "black"),
-    axis.title.y = element_text(size = 12.5, color = "black", face = "bold"),
+    axis.title.x = element_text(size = 7, color = "black"),
+    axis.title.y = element_text(size = 7, color = "black",),
     legend.position = "none",
-    panel.border = element_rect(color = "black", fill = NA, size = 1))
+    panel.border = element_rect(color = "black", fill = NA, size = 0.7))
 
-ggsave(hormone_forest_plot, filename = "Figures/ED Hormones RRS Regression Forest Plot v2.jpg", width = 4.5, height = 6, dpi = 500)
+ggsave(hormone_forest_plot, filename = "Figures/ED Hormones RRS Regression Forest Plot.jpg", width = 4.5, height = 6, dpi = 500)
 
 
 ```
 
+# Combined results
 ```{r}
 
 
@@ -359,5 +358,44 @@ write.csv(regression_results_combined, "RRS Correlates/Combined RRS Associations
 
 ```
 
+# Combined plots
 
+```{r}
+
+
+# Top row: b, c, d, e
+top_row <- ggarrange(
+  p_train_com,
+  p_holdout_com,
+  p_external_com,
+  RRS_AUC_com,
+  nrow = 1,
+  labels = c("b", "c", "d", "e"),
+  font.label = list(size = 10, face = "bold"),
+  align = "h",
+  widths = c(1.8, 2.75, 1.8, 3.5)
+)
+
+# Bottom row: f, g
+bottom_row <- ggarrange(
+  demographics_forest,
+  hormone_forest_plot,
+  nrow = 1,
+  labels = c("f", "g"),
+  font.label = list(size = 10, face = "bold"),
+  align = "h",
+  widths = c(1, 1)
+)
+
+# Combine rows
+RRS_combined_figure <- ggarrange(
+  top_row,
+  bottom_row,
+  ncol = 1,
+  heights = c(0.5, 1)
+)
+
+ggsave(RRS_combined_figure, filename = "Figures/RRS validation and RRS associations.jpg", width = 180, height = 130, units = "mm", dpi = 600)
+
+```
 

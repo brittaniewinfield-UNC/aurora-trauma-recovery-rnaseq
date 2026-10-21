@@ -11,20 +11,19 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root) 
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
 
-<!-- ---- original lines 6885-7680 ---- -->
 
 # CMAP ANALYSIS 
 The most fundamental analysis performed on the CMap/LINCS resource is the ‘query’ in which an external gene set is compared for similarity against all the perturbational signatures in the resource (see Lamb et al 2006 and Subramanian et al 2017). The web application at clue.io/query enables this form of analysis, where a user can submit their query gene set for analysis and get back a list of reference signatures ordered by their similarity to the query. Given the expanded size of the updated resource, the query methodology has been duly updated to avoid the need for a precomputed background distribution of connectivity scores for each reference signature, as was required in the tau computation, described in Subramanian et al 2017, though the tau method can still be accessed by selecting the ‘1.0’ option in the dropdown menu at clue.io/query. The updated algorithm, which is accessed by selecting the ‘latest’ option in the dropdown menu, proceeds as follows:
@@ -42,7 +41,7 @@ Hence, each query produces two key output matrices, which can be accessed throug
 
 ### ED-M6
 ```{r}
-BING_genes <- read.csv("CMap Analyses Updated/BING_genes.csv")
+BING_genes <- read.csv("CMap Analysis/BING_genes.csv")
 table(BING_genes$Inference.Category)
 
 BING_genes_list <- BING_genes %>%
@@ -68,7 +67,7 @@ top_M6 <- shared_DEGs_summary_sig %>%
   filter(Avg_logFC > 0) %>%
   arrange(desc(abs(Avg_logFC)))
 
-out_dir <- "CMap Analysis Final/CLUE Gene Sets"
+out_dir <- "CMap Analysis/CLUE Gene Sets"
 
 for (n in top_sizes) {
   
@@ -80,7 +79,7 @@ for (n in top_sizes) {
 }
 
 
-out_dir <- "CMap Analysis Final/CLUE Gene Sets"
+out_dir <- "CMap Analysis/CLUE Gene Sets"
 top_sizes <- c(50, 75, 100)
 
 cmap_gene_sets_excel <- top_sizes %>%
@@ -103,41 +102,6 @@ write.xlsx(
 )
 ```
 
-### ED - WK2 
-```{r}
-ED_WK2_genes <- read.csv("2WK Analyses/Differential Expression Analyses/Results/DEA_High_RRS_ED_vs_WK2.csv")
-
-ED_WK2_genes_sig <- ED_WK2_genes %>%
-  filter(adj.P.Val < 0.05, Gene %in% BING_genes_list)
-
-# top genes higher at ED: negative logFC
-top_ED_WK2_ED <- ED_WK2_genes_sig %>%
-  filter(logFC < 0) %>%
-  arrange(desc(abs(logFC)))
-
-# top genes higher at WK2: positive logFC
-top_ED_WK2_WK2 <- ED_WK2_genes_sig %>%
-  filter(logFC > 0) %>%
-  arrange(desc(abs(logFC)))
-
-out_dir <- "CMap Analysis Final/CLUE Gene Sets/ED-WK2"
-
-
-for (n in top_sizes) {
-  
-  genes_ED <- top_ED_WK2_ED %>% 
-    slice_head(n = n) %>% 
-    pull(Gene)
-  
-  genes_WK2 <- top_ED_WK2_WK2 %>% 
-    slice_head(n = n) %>% 
-    pull(Gene)
-  
-  writeLines(genes_ED, con = file.path(out_dir, paste0("top", n, "_ED_up.grp")))
-  writeLines(genes_WK2, con = file.path(out_dir, paste0("top", n, "_WK2_up.grp")))
-}
-
-```
 
 
 
@@ -285,35 +249,35 @@ run_cmap_workflow <- function(analysis_name, up_gmt, down_gmt, query_result_file
 ```{r}
 cmap_res_top25 <- run_cmap_workflow(
   analysis_name = "EDM6_Top25",
-  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/up.gmt",
-  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/down.gmt",
-  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/arfs/TAG/query_result.gct",
-  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
-  out_dir = "CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top25")
+  up_gmt = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/up.gmt",
+  down_gmt = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/down.gmt",
+  query_result_file = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 25/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis/CMap Processed Results/ED-M6 Results/EDM6_Top25")
 
 cmap_res_top50 <- run_cmap_workflow(
   analysis_name = "EDM6_Top50",
-  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/up.gmt",
-  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/down.gmt",
-  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/arfs/TAG/query_result.gct",
-  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
-  out_dir = "CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top50")
+  up_gmt = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/up.gmt",
+  down_gmt = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/down.gmt",
+  query_result_file = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 50/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis/CMap Processed Results/ED-M6 Results/EDM6_Top50")
 
 cmap_res_top75 <- run_cmap_workflow(
   analysis_name = "EDM6_Top75",
-  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/up.gmt",
-  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/down.gmt",
-  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/arfs/TAG/query_result.gct",
-  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
-  out_dir = "CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top75")
+  up_gmt = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/up.gmt",
+  down_gmt = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/down.gmt",
+  query_result_file = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 75/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis/CMap Processed Results/ED-M6 Results/EDM6_Top75")
 
 cmap_res_top100 <- run_cmap_workflow(
   analysis_name = "EDM6_Top100",
-  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/up.gmt",
-  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/down.gmt",
-  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/arfs/TAG/query_result.gct",
-  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
-  out_dir = "CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top100")
+  up_gmt = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/up.gmt",
+  down_gmt = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/down.gmt",
+  query_result_file = "CMap Analysis/CLUE Query Results/ED-M6 Results/ED-M6 Top 100/arfs/TAG/query_result.gct",
+  cellinfo_file = "CMap Analysis/CLUE Query Results/cellinfo_beta.txt",
+  out_dir = "CMap Analysis/CMap Processed Results/ED-M6 Results/EDM6_Top100")
 
 
 all_cmap_results <- list(Top50 = cmap_res_top50,
@@ -350,7 +314,7 @@ compound_stability_combined <- all_cmap_results[c("Top50", "Top75", "Top100")] %
     `Targets` = Targets)
 
 
-write.csv(compound_stability_combined, "CMap Analysis Final/CMap Processed Results/Summaries/EDM6_Compounds_Combined.csv")
+write.csv(compound_stability_combined, "CMap Analysis/CMap Processed Results/Summaries/EDM6_Compounds_Combined.csv")
 
 ```
 
@@ -561,7 +525,7 @@ opposer_summary_2 <- combined_summary %>%
 
 # WRITE TO EXCEL ---------------------------------------------------------------
 
-out_file <- "CMap Analysis Final/CMap Processed Results/Summaries/EDM6_Overlap_Summary.xlsx"
+out_file <- "CMap Analysis/CMap Processed Results/Summaries/EDM6_Overlap_Summary.xlsx"
 
 wb <- createWorkbook()
 
@@ -579,235 +543,6 @@ combined_summary %>%
 
 ```
 
-### ED - WK2 
-```{r}
-cmap_res_top25 <- run_cmap_workflow(
-  analysis_name = "EDWK2_Top25",
-  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 25/up.gmt", 
-  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 25/down.gmt", 
-  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 25/arfs/TAG/query_result.gct",
-  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
-  out_dir = "CMap Analysis Final/CMap Processed Results/ED-WK2 Results/EDWK2_Top25")
-
-cmap_res_top50 <- run_cmap_workflow(
-  analysis_name = "EDWK2_Top50",
-  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 50/up.gmt", 
-  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 50/down.gmt", 
-  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 50/arfs/TAG/query_result.gct",
-  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
-  out_dir = "CMap Analysis Final/CMap Processed Results/ED-WK2 Results/EDWK2_Top50")
-
-
-cmap_res_top75 <- run_cmap_workflow(
-  analysis_name = "EDWK2_Top75",
-  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 75/up.gmt", 
-  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 75/down.gmt", 
-  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 75/arfs/TAG/query_result.gct",
-  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
-  out_dir = "CMap Analysis Final/CMap Processed Results/ED-WK2 Results/EDWK2_Top75")
-
-
-cmap_res_top100 <- run_cmap_workflow(
-  analysis_name = "EDWK2_Top100",
-  up_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 100/up.gmt", 
-  down_gmt = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 100/down.gmt", 
-  query_result_file = "CMap Analysis Final/CLUE Query Results/ED-WK2 Results/ED-WK2 Top 100/arfs/TAG/query_result.gct",
-  cellinfo_file = "CMap Analysis Final/CLUE Query Results/cellinfo_beta.txt",
-  out_dir = "CMap Analysis Final/CMap Processed Results/ED-WK2 Results/EDWK2_Top100")
-
-
-
-all_cmap_results <- list(Top50 = cmap_res_top50,
-                         Top75 = cmap_res_top75, Top100 = cmap_res_top100)
-
-
-# EXPORT RESULTS ----------------------------------------------------------
-
-# MIMICKERS ---------------------------------------------------------------
-wb_mim <- createWorkbook()
-
-purrr::iwalk(all_cmap_results, function(res, analysis_name) {
-  
-  df <- res$mimickers_compound_stability %>%
-    arrange(desc(median_NCS), desc(median_fdr_q_nlog10)) %>%
-    mutate(analysis = analysis_name) %>%
-    dplyr::select(analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
-                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10,  max_fdr_q_nlog10, MOA, Targets)
-  
-  addWorksheet(wb_mim, sheetName = analysis_name)
-  writeData(wb_mim, sheet = analysis_name, x = df)
-  
-  addStyle(wb_mim, sheet = analysis_name, style = header_style, rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
-  
-  addStyle(wb_mim, sheet = analysis_name, style = body_style, rows = 2:(nrow(df) + 1), cols = 1:ncol(df), gridExpand = TRUE)
-    
-  num_cols <- which(names(df) %in% c("median_NCS", "IQR_NCS", "sd_NCS", "min_NCS", "max_NCS",
-                                       "median_TAS", "sd_TAS", "median_fdr_q_nlog10", "max_fdr_q_nlog10"))
-    
-  addStyle(wb_mim, sheet = analysis_name, style = num_style, rows = 2:(nrow(df) + 1), cols = num_cols, gridExpand = TRUE)
-  
-  setColWidths(wb_mim, sheet = analysis_name, cols = 1:ncol(df), widths = "auto")
-  freezePane(wb_mim, sheet = analysis_name, firstRow = TRUE)
-})
-
-saveWorkbook(wb_mim, file = "CMap Analysis Final/CMap Processed Results/Summaries/EDWK2_Mimickers_Combined.xlsx", overwrite = TRUE)
-
-# OPPOSERS ---------------------------------------------------------------
-
-wb_opp <- createWorkbook()
-
-purrr::iwalk(all_cmap_results, function(res, analysis_name) {
-  
-  df <- res$opposers_compound_stability %>%
-    arrange(median_NCS, desc(median_fdr_q_nlog10)) %>%
-    mutate(analysis = analysis_name) %>%
-    dplyr::select(analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
-                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
-  
-  addWorksheet(wb_opp, sheetName = analysis_name)
-  writeData(wb_opp, sheet = analysis_name, x = df)
-  
-  addStyle(wb_opp, sheet = analysis_name, style = header_style, rows = 1, cols = 1:ncol(df), gridExpand = TRUE)
-  
-  addStyle(wb_opp, sheet = analysis_name, style = body_style, rows = 2:(nrow(df) + 1), cols = 1:ncol(df), gridExpand = TRUE)
-    
-  num_cols <- which(names(df) %in% c("median_NCS", "IQR_NCS", "sd_NCS", "min_NCS", "max_NCS",
-                                     "median_TAS", "sd_TAS", "median_fdr_q_nlog10", "max_fdr_q_nlog10"))
-    
-  addStyle(wb_opp, sheet = analysis_name, style = num_style, rows = 2:(nrow(df) + 1), cols = num_cols, gridExpand = TRUE)
-  
-  setColWidths(wb_opp, sheet = analysis_name, cols = 1:ncol(df), widths = "auto")
-  freezePane(wb_opp, sheet = analysis_name, firstRow = TRUE)
-})
-
-saveWorkbook(wb_opp, file = "CMap Analysis Final/CMap Processed Results/Summaries/EDWK2_Opposers_Combined.xlsx", overwrite = TRUE)
-
-# OVERLAP -----------------------------------------------------------------
-
-# MIMICKERS ---------------------------------------------------------------
-
-all_mimickers_long <- purrr::imap_dfr(all_cmap_results, function(res, analysis_name) {
-  res$mimickers_compound_stability %>%
-    mutate(analysis = analysis_name, list_type = "Mimicker") %>%
-    dplyr::select(list_type, analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS,
-                  min_NCS, max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
-})
-
-mimicker_presence_long <- all_mimickers_long %>%
-  distinct(pert_iname, analysis, .keep_all = TRUE)
-
-mimicker_presence_wide <- mimicker_presence_long %>%
-  mutate(present = 1) %>%
-  dplyr::select(pert_iname, analysis, present) %>%
-  pivot_wider(names_from = analysis, values_from = present, values_fill = 0)
-
-mimicker_summary <- mimicker_presence_long %>%
-  group_by(pert_iname) %>%
-  summarise(
-    list_type = "Mimicker",
-    analyses_present = paste(sort(unique(analysis)), collapse = ", "),
-    n_analyses_present = n_distinct(analysis),
-    MOA = {
-      vals <- unique(na.omit(MOA))
-      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
-    },
-    Targets = {
-      vals <- unique(na.omit(Targets))
-      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
-    },
-    median_of_median_NCS = median(median_NCS, na.rm = TRUE),
-    extreme_median_NCS = max(median_NCS, na.rm = TRUE),
-    median_of_median_TAS = median(median_TAS, na.rm = TRUE),
-    median_of_median_fdr_q_nlog10 = median(median_fdr_q_nlog10, na.rm = TRUE),
-    median_n_quality_sigs = median(n_quality_sigs, na.rm = TRUE),
-    median_n_cell_lines = median(n_cell_lines, na.rm = TRUE),
-    .groups = "drop")
-
-# OPPOSERS  ---------------------------------------------------------------
-
-all_opposers_long <- purrr::imap_dfr(all_cmap_results, function(res, analysis_name) {
-  res$opposers_compound_stability %>%
-    mutate(analysis = analysis_name, list_type = "Opposer") %>%
-    dplyr::select(list_type, analysis, pert_iname, n_quality_sigs, n_cell_lines, median_NCS, IQR_NCS, sd_NCS, min_NCS,
-                  max_NCS, median_TAS, sd_TAS, median_fdr_q_nlog10, max_fdr_q_nlog10, MOA, Targets)
-})
-
-opposer_presence_long <- all_opposers_long %>%
-  distinct(pert_iname, analysis, .keep_all = TRUE)
-
-opposer_presence_wide <- opposer_presence_long %>%
-  mutate(present = 1) %>%
-  dplyr::select(pert_iname, analysis, present) %>%
-  pivot_wider(names_from = analysis, values_from = present, values_fill = 0)
-
-opposer_summary <- opposer_presence_long %>%
-  group_by(pert_iname) %>%
-  summarise(
-    list_type = "Opposer",
-    analyses_present = paste(sort(unique(analysis)), collapse = ", "),
-    n_analyses_present = n_distinct(analysis),
-    MOA = {
-      vals <- unique(na.omit(MOA))
-      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
-    },
-    Targets = {
-      vals <- unique(na.omit(Targets))
-      if (length(vals) == 0) NA_character_ else paste(vals, collapse = ", ")
-    },
-    median_of_median_NCS = median(median_NCS, na.rm = TRUE),
-    extreme_median_NCS = min(median_NCS, na.rm = TRUE),
-    median_of_median_TAS = median(median_TAS, na.rm = TRUE),
-    median_of_median_fdr_q_nlog10 = median(median_fdr_q_nlog10, na.rm = TRUE),
-    median_n_quality_sigs = median(n_quality_sigs, na.rm = TRUE),
-    median_n_cell_lines = median(n_cell_lines, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# COMBINED ---------------------------------------------------------------
-
-combined_summary <- bind_rows(mimicker_summary, opposer_summary)
-
-compound_overlap_flag <- combined_summary %>%
-  distinct(pert_iname, list_type) %>%
-  dplyr::count(pert_iname, name = "n_lists") %>%
-  mutate(identified_in_both_lists = n_lists == 2) %>%
-  dplyr::select(pert_iname, identified_in_both_lists)
-
-combined_summary <- combined_summary %>%
-  left_join(compound_overlap_flag, by = "pert_iname") %>%
-  mutate(
-    overlap_status = case_when(
-      identified_in_both_lists ~ "Both",
-      list_type == "Mimicker" ~ "Mimicker only",
-      list_type == "Opposer" ~ "Opposer only",
-      TRUE ~ NA_character_)) %>%
-  arrange(desc(identified_in_both_lists), pert_iname, list_type)
-
-mimicker_summary_2 <- combined_summary %>%
-  filter(list_type == "Mimicker") %>%
-  dplyr::rename(Type = list_type) %>%
-  arrange(desc(n_analyses_present), desc(median_of_median_NCS))
-
-opposer_summary_2 <- combined_summary %>%
-  filter(list_type == "Opposer") %>%
-  dplyr::rename(Type = list_type) %>%
-  arrange(desc(n_analyses_present), median_of_median_NCS)
-
-
-# WRITE TO EXCEL ---------------------------------------------------------------
-
-out_file <- "CMap Analysis Final/CMap Processed Results/Summaries/EDWK2_Overlap_Summary.xlsx"
-
-wb <- createWorkbook()
-
-addWorksheet(wb, "Mimicker_Summary")
-writeData(wb, "Mimicker_Summary", mimicker_summary_2)
-
-addWorksheet(wb, "Opposer_Summary")
-writeData(wb, "Opposer_Summary", opposer_summary_2)
-
-saveWorkbook(wb, out_file, overwrite = TRUE)
-```
 
 ```{r}
 # Checkpoint: all_cmap_results, mimicker_summary, and opposer_summary are

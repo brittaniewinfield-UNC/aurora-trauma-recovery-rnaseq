@@ -11,21 +11,19 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 shared_DEGs_list <- read_checkpoint("shared_DEGs_list")
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 4691-5009 ---- -->
 
 # CELL x GENES ANALYSIS
 ED–M6 changes in immune cell fractions were modeled against within-participant expression changes restricted to the shared DEG set, allowing focused evaluation of cell–gene coupling within the core recovery-associated transcriptional program. This analysis tested whether dynamic shifts in circulating immune composition tracked with the transcriptional remodeling characteristic of recovery. Significant associations were identified through gene-level regressions and FDR correction, and overlap patterns were examined to characterize shared and cell type–specific relationships.
@@ -193,7 +191,7 @@ sig_cell_gene_associations <- cell_gene_associations_df %>%
   arrange(desc(Total))
   
 
-#write.csv(sig_cell_gene_associations, "Cell x DEG Analysis/Summaries/Cell x DEG Significant Counts.csv")
+write.csv(sig_cell_gene_associations, "Cell x DEG Analysis/Summaries/Cell x DEG Significant Counts.csv")
 
 
 
@@ -325,7 +323,7 @@ plot_upset <- function(upset_df) {
 
 plot_upset(upset_df)
 
-jpeg(filename = "Figures/Ext Data Fig 3 - Cell x Gene Upset Plot.jpg", width  = 8, height = 6, units = "in", res = 600)
+jpeg(filename = "Cell x DEG Analysis/Plots/Cell x Gene Upset Plot.jpg", width  = 8, height = 6, units = "in", res = 600)
 plot_upset(upset_df)
 dev.off()
 ```

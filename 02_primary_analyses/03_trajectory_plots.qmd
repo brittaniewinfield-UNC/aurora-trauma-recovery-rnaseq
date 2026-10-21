@@ -11,20 +11,18 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
 
-<!-- ---- original lines 654-781 ---- -->
 
 # TRAJECTORY PLOTS 
 ```{r}
@@ -80,7 +78,7 @@ create_trajectory_plot <- function(data, apns_outcome, closest_days) {
     max_y <- max(summary$Mean_Score, na.rm = TRUE) 
   
   plot <- ggplot(summary %>% filter(Day <= closest_day), aes(x = Day, y = Mean_Score, color = Class)) +
-    geom_line(linewidth = 2) + 
+    geom_line(linewidth = 1) + 
     labs(title =NULL, x = "Months", y = "Score") +  # paste0(apns_outcome)
     scale_color_manual(values = c("Low" = "#AAA8B3", 
                                   "Moderate Recovery" = "#858290", 
@@ -92,15 +90,15 @@ create_trajectory_plot <- function(data, apns_outcome, closest_days) {
     theme_minimal() +
     theme(
       panel.grid = element_blank(),
-      text = element_text(size = 12), 
+      text = element_text(size = 7), 
       axis.title.y = element_blank(), 
       axis.title.x = element_blank(), 
-      axis.text.y = element_text(size = 12, color = "black"), 
-      axis.text.x = element_text(size = 12, color = "black", hjust = 0.5),
-      plot.title = element_text(size = 13, color = "black",margin = margin(l = -10), face =  "bold"), 
+      axis.text.y = element_text(size = 7, color = "black", margin = margin(r = -2)), 
+      axis.text.x = element_text(size = 7, color = "black", vjust = 2),
+      plot.title = element_text(size = 7, color = "black",margin = margin(l = -10), face =  "bold"), 
       legend.position = "none", 
-      legend.title = element_text(size = 18, color = "black"), 
-      legend.text = element_text(size = 18, color = "black"), 
+      #legend.title = element_text(size = 18, color = "black"), 
+      #legend.text = element_text(size = 18, color = "black"), 
       legend.key.size =unit(0.75, "cm"),
       panel.border = element_rect(color = "black", size = 1, fill = NA),
       plot.margin = margin(t = 1, r = 3, b = 1, l = 3, unit = "pt"))
@@ -147,10 +145,6 @@ line_sleep <- trajectory_plots[["Sleep"]]
 line_sleep <- line_sleep + scale_y_continuous(limits = c(-0.1, 2.75), breaks = c(0, 2))
 
 trajectory_order <- list(line_pain, line_avoidance, line_reexperience, line_hyperarousal, line_anxious, line_somatic, line_mentalfatigue, line_depression,line_nightmare, line_sleep )
-
-trajectory_plot <- ggarrange(plotlist = trajectory_order, ncol = 5, nrow = 2, align = "hv", common.legend = TRUE, legend = "bottom")
-
-ggsave(trajectory_plot, filename="Cohort Characteristics/Plots/APNS Latent Class Trajectory Line Plots - R an C.jpg", width = 7, height = 3.5, units = "in")
 
 ```
 

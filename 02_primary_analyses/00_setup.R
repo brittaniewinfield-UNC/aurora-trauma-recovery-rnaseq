@@ -76,7 +76,7 @@ format_num <- function(x) {
 
 APNS_ordered <- c("Pain","Avoidance","Reexperience","Hyperarousal","Anxious","Depression","Somatic","MentalFatigue","Nightmare","Sleep")
 
-APNS_labels <- c("Pain","Avoidance","Reexperience","Hyperarousal","Anxious","Depression", "Somatic","Mental Fatigue","Nightmare","Sleep")
+APNS_labels <- c("Pain","Avoidance","Reexperiencing","Hyperarousal","Anxiety","Depression", "Somatic","Mental Fatigue","Nightmares","Sleep")
 
 class_order <- c("Low", "Moderate Recovery", "Moderate", "High")
 
@@ -112,25 +112,23 @@ data_root <- dirname(here::here())
 # against data_root explicitly (robust whether this is sourced interactively
 # or during a Quarto render).
 
-RNA_manifest <- read.csv(file.path(data_root, "Data/RNA Data/Analysis Data/RNA_manifest_V47_ED6M_490_3-23-2026.csv"))
-RNA_seq_counts <- read.csv(file.path(data_root, "Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_counts_ED6M_490_3-23-2026.csv"))
-RNA_seq_log2 <- read.csv(file.path(data_root, "Data/RNA Data/Analysis Data/AURORA_RNA_Seq_V47_log2_ED6M_490_3-23-2026.csv"))
+RNA_manifest <- read.csv(file.path(data_root, "Data/RNA Data/Analysis Data/RNA_manifest_ED6M_analysis.csv"))
+RNA_seq_counts <- read.csv(file.path(data_root, "Data/RNA Data/Analysis Data/AURORA_RNAseq_counts_ED6M_analysis.csv"))
+RNA_seq_log2 <- read.csv(file.path(data_root, "Data/RNA Data/Analysis Data/AURORA_RNAseq_log2_ED6M_analysis.csv"))
 
-metadata <- read.csv(file.path(data_root, "Data/Metadata/Analysis Data/Metadata_Analysis_8-12-2026.csv"))
-metadata_RNA <- read.csv(file.path(data_root, "Data/Metadata/Analysis Data/Metadata_Analysis_ICs_3-23-2026.csv")) %>%
-  dplyr::rename(Depression = Loss)
+metadata <- read.csv(file.path(data_root, "Data/Metadata/Analysis Data/Metadata_analysis.csv"))
+metadata_RNA <- read.csv(file.path(data_root, "Data/Metadata/Analysis Data/Metadata_ICs_analysis.csv")) 
 
-TF_activity <- read.csv(file.path(data_root, "Data/Transcription Factor Data/Analysis Data/TF_Activity_890_3-31-2026.csv"))
+TF_activity <- read.csv(file.path(data_root, "Data/Transcription Factor Data/Analysis Data/TF_activity_ED6M_analysis.csv"))
 
-cell_fractions <- read.csv(file.path(data_root, "Data/Cibersort Data/Analysis Data/Cibersort_Arcsin_Estimated_Cell_Fractions_ED6M_490_3-23-2026.csv"))
+cell_fractions <- read.csv(file.path(data_root, "Data/Cibersort Data/Analysis Data/Cibersort_arcsin_estimated_cell_fractions_ED6M_analysis.csv"))
 
 latent_class_trajectories <- read.csv(file.path(data_root, "Data/Metadata/Latent Class Data/AURORA_RNA_Expression_Latent_Class_Trajectories.csv"))
 
-hormone_data <- read.csv(file.path(data_root, "Data/Steroid Hormone Data/Analysis Data/Steroid_Hormone_ED_Data_184_3-23-2026.csv"))
+hormone_data <- read.csv(file.path(data_root, "Data/Steroid Hormone Data/Analysis Data/Steroid_hormone_data_ED_analysis.csv"))
 
-cytokine_data <- read.csv(file.path(data_root, "Data/Cytokine Data/Analysis Data/Cytokine_Data_ED6M_422_3-23-2026.csv"))
+cytokine_data <- read.csv(file.path(data_root, "Data/Cytokine Data/Analysis Data/Cytokine_data_ED6M_analysis.csv"))
 
-CRP_data <- read.csv(file.path(data_root, "Data/CRP Data/Analysis Data/CRP_Data_EDM6_460_3-23-2026.csv"))
 
 ## ---- Determine ED-M6 and ED-2WK-M6 RNA-seq cohorts ---------------------------
 # Verbatim logic from the original chunk. RNA_manifest is already scoped to

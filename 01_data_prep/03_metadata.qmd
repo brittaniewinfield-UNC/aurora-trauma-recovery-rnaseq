@@ -11,18 +11,14 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 ```
-
-<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 164-470 ---- -->
 
 # METADATA 
 Freeze 3 survey and clinical modules are imported and merged into a single metadata table for ED–M6 RNA participants. The medication module is excluded from this join because of its long format and is handled as a separate dataset.
@@ -94,35 +90,16 @@ metadata_raw <- metadata_raw %>%
   dplyr::rename(
     Avoidance = Avoid,
     Hyperarousal = Arousal, 
-    Depression = Loss)
-
-
-metadata_raw %>%
-  #filter(PID %in% ED_M6_paired_PIDs) %>%
-  mutate(
-    ADI_NatRank = replace(ADI_NatRank, ADI_NatRank %in% c(-6, -7, -8), NA),
-    ADI_NatRank = as.numeric(ADI_NatRank)
-  ) %>%
-  summarise(
-    N = sum(!is.na(ADI_NatRank)),
-    Mean = mean(ADI_NatRank, na.rm = TRUE),
-    SD = sd(ADI_NatRank, na.rm = TRUE),
-    Min = min(ADI_NatRank, na.rm = TRUE),
-    Max = max(ADI_NatRank, na.rm = TRUE)
-  )
-
-table(metadata_raw$Site_New)
-
-table(sample_v2$SiteID)
+    Depression = Loss, 
+    Anxiety = Anxious)
 ```
 
 
 ## Medication data 
-Medication data (not sure if needed) for participants with paired ED–M6 RNA-seq were extracted and reduced to three fields: pre-ED medications, ED medications, and discharge medications. Wide module columns were reshaped into a compact format where each participant has a readable comma-separated list of medications for each timepoint.
+Medication data for participants with paired ED–M6 RNA-seq were extracted and reduced to three fields: pre-ED medications, ED medications, and discharge medications. Wide module columns were reshaped into a compact format where each participant has a readable comma-separated list of medications for each timepoint.
 ```{r}
-
 medication_raw <- read.csv(
-  "Data/Metadata/PID Datasets/AURORA_Freeze_3_medication_mod.csv",
+  "Data/Metadata/AURORA_Freeze_3/AURORA_Freeze_3_medication_mod.csv",
   check.names = FALSE) %>%
   filter(PID %in% ED_M6_paired_PIDs) %>%
   dplyr::select(PID,
@@ -163,16 +140,24 @@ medication_summary <- medication_tidy %>%
 ## Cleaning Metadata 
 Participant-level metadata were restricted to individuals with paired ED–M6 RNA-seq and complete latent class assignments across ten APNS domains. Demographic, clinical, psychosocial, and medication variables were selected, recoded into interpretable factors (e.g., race, education, marital status, 0/1 meds → No/Yes, combined SNRI/SSRI flags), and key aliases (Age, Site, Trauma_Type, ED_Pain, CTQSF, PDI, ADI) were created for analysis. Low-frequency APNS classes were collapsed (Nightmare, MentalFatigue), and RNA inventory codes and timepoints were merged to yield a harmonized Metadata_Analysis_RNA table for downstream modeling.
 ```{r}
-
 metadata_filtered <- metadata_raw %>%
   filter(PID %in% ED_M6_paired_PIDs)
-
 
 metadata_filtered <- metadata_filtered %>%
   filter(if_all(all_of(APNS_ordered), ~ !is.na(.x)))
 
 length(metadata_filtered$PID)  # 245  
 
+# domains appear first in any tables
+
+PID, WK2_Stress_MAX, WK8_Stress_MAX, M3_Stress_MAX, 
+                WK2_PROM_Pain4a_T, WK8_PROM_Pain4a_T, M3_PROM_Pain4a_T, 
+                WK8_PSS10_Total_RS, M3_PSS10_Total_RS, M6_PSS10_Total_RS,
+                PRE_PSS10_CantCope_RS, WK8_PSS10_CantCope_RS, M3_PSS10_CantCope_RS, M6_PSS10_CantCope_RS,
+                PRE_PSS10_Distress_RS, WK8_PSS10_Distress_RS, M3_PSS10_Distress_RS, M6_PSS10_Distress_RS,
+                WK2_Pain, WK8_Pain, M3_Pain, M6_Pain
+
+PRE_PSS10_CantCope_RS
 # numerical variables of interest 
 num_vars <- c(
   "ADI_NatRank","ED_Age","BMI","WK2_CTQSF_Total_RS","ED_NowPain","ED_PDI_RS",
@@ -182,7 +167,7 @@ num_vars <- c(
   "PRE_SCRN_GAD_RS","PRE_PROM_Dep8b_T",
   "WK2_PROM_SelfEffEmo4a_T","PRE_PCL5_RS","PRE_PROM_Pain4a_T","PRE_Stress_Max",
   "PRE_PSS10_Total_RS","WK2_FFMQ_RS","M6_FFMQ_RS","WK2_CDRISC10_RS",
-  "WK2_BFI_Neuro_RS","PRE_DESB_RS","WK2_DESB_RS","ED_MCEPS_RS", "WK2_PROM_EmoSup4a_RS", "WK2_BFI_Neuro_MN", "WK2_TIPI_Extraversion_MN", "WK2_TIPI_Agreeable_MN", "WK2_TIPI_Conscientious_MN", "WK2_TIPI_EmoStability_MN", "WK2_TIPI_OpenExper_MN")
+  "WK2_BFI_Neuro_RS","PRE_DESB_RS","WK2_DESB_RS","ED_MCEPS_RS", "WK2_PROM_EmoSup4a_RS", "WK2_BFI_Neuro_MN", "WK2_TIPI_Extraversion_MN", "WK2_TIPI_Agreeable_MN", "WK2_TIPI_Conscientious_MN", "WK2_TIPI_EmoStability_MN", "WK2_TIPI_OpenExper_MN", "PRE_PSS10_CantCope_RS",)
 
 # categorical variables of interest 
 cat_vars <- c(
@@ -315,20 +300,17 @@ Metadata_Analysis <- Metadata_Analysis %>%
 table(Metadata_Analysis$Nightmare)
 table(Metadata_Analysis$MentalFatigue)
 
-#write.csv(Metadata_Analysis, "Data/Metadata/Analysis Data/Metadata_Analysis_8-12-2026.csv")
+# opportunity to write the metadata 
+write.csv(Metadata_Analysis, "Data/Metadata/Analysis Data/Metadata_analysis.csv")
 
-# add Inventory Code information to metadata 
-
-
+# add Inventory Code information to metadata for downstream analyses
 Metadata_Analysis_RNA_paired <- Metadata_Analysis %>%
   mutate(PID = as.character(PID)) %>%
   left_join(RNA_manifest %>% mutate(PID = as.character(PID)),
     by = "PID") %>%
     dplyr::select(PID, INVENTORY.CODE, Timepoint, everything())
-
-
-#write.csv(Metadata_Analysis, "Data/Metadata/Analysis Data/Metadata_Analysis_All_20260620.csv")
-
+# opportunity to write the metadata 
+write.csv(Metadata_Analysis_RNA_paired, "Data/Metadata/Analysis Data/Metadata_ICs_analysis.csv")
 ```
 
 

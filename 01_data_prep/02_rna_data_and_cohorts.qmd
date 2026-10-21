@@ -11,18 +11,15 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)
 ```
 
-<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 32-163 ---- -->
 
 # RNA DATA
 Raw GENCODE v47 RNA-seq count and log2-transformed matrices are imported and used to define the 890 sequenced samples. Batch 1 and Batch 2 RNA manifests are harmonized, combined, and restricted to inventory codes present in the RNA-seq matrices, reflecting samples retained after RNA-seq quality control. Timepoint codes (T0–T3) are recoded to ED, 2-week (2WK), and 6-month (M6) labels, and participant-level sets with RNA-seq data at each visit (ED, 2WK, M6) are derived from the unified manifest.

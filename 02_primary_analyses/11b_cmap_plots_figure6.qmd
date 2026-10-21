@@ -11,13 +11,13 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 all_cmap_results <- read_checkpoint("all_cmap_results")
@@ -25,10 +25,6 @@ mimicker_summary <- read_checkpoint("mimicker_summary")
 opposer_summary <- read_checkpoint("opposer_summary")
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
-<!-- Note: original lines 7667-7680 (between chunk-close 7666 and chunk-open 7682) contain orphaned/unfenced R code in the source file -- appears to be a pre-existing fence mismatch bug in the original document, carried over verbatim. Flagged for author review; not modified during extraction. -->
-
-<!-- ---- original lines 7681-8043 ---- -->
 
 ## MOAs Barplot 
 ```{r}
@@ -84,15 +80,15 @@ mimicker_MOA_plot <- ggplot(moa_bar_df_mimicker, aes(x = n_compounds, y = MOA)) 
   geom_col(width = 0.75, fill = "#2698B1") +
   scale_x_continuous(breaks = c(0,2,4,6,8,10)) +
   labs(x = "# of Compounds", y = NULL, title = NULL) +
-  theme_minimal(base_size = 12) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
-    axis.title = element_text(size = 12, color = "black"),
-    axis.text.y = element_text(size = 11, color = "black"),
-    axis.text.x = element_text(size = 11, color = "black"),
-    plot.title = element_text(face = "bold", size = 12),
-    panel.border = element_rect(color = "black", fill = NA), 
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text.y = element_text(size = 7, color = "black"),
+    axis.text.x = element_text(size = 7, color = "black"),
+    plot.title = element_text(face = "bold", size = 7),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.75), 
     plot.margin = margin(t = 5, r = 1, b = 5, l = 1, unit = "pt"))
 
 moa_bar_df_opposer <- moa_bar_df_opposer %>%
@@ -103,19 +99,20 @@ opposer_MOA_plot <- ggplot(moa_bar_df_opposer, aes(x = n_compounds, y = MOA)) +
   geom_col(width = 0.75, fill = "#8D1946") +
   scale_x_continuous(breaks = c(0,2,4,6,8,10)) +
   labs(x = "# of Compounds", y = NULL, title = NULL) +
-  theme_minimal(base_size = 12) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
-    axis.title = element_text(size = 12, color = "black"),
-    axis.text.y = element_text(size = 11, color = "black"),
-    axis.text.x = element_text(size = 11, color = "black"),
-    plot.title = element_text(face = "bold", size = 12),
-    panel.border = element_rect(color = "black", fill = NA), 
+    axis.title = element_text(size = 7, color = "black"),
+    axis.text.y = element_text(size = 7, color = "black"),
+    axis.text.x = element_text(size = 7, color = "black"),
+    plot.title = element_text(face = "bold", size = 7),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.75), 
     plot.margin = margin(t = 5, r = 1, b = 5, l = 1, unit = "pt"))
 
 
-write.csv(moa_bar_df %>% filter(MOA != "Unknown"), "CMap Analysis Final/CMap Processed Results/Summaries/Mechanism_of_Action_Counts.csv")
+write.csv(moa_bar_df %>% filter(MOA != "Unknown"), "CMap Analysis/CMap Processed Results/Summaries/Mechanism_of_Action_Counts.csv")
+
 ```
 
 ## Compound Boxplot 
@@ -123,9 +120,9 @@ write.csv(moa_bar_df %>% filter(MOA != "Unknown"), "CMap Analysis Final/CMap Pro
 ### Load signature results 
 ```{r}
 ## Read CLUE signature-level ranked results across all gene-set sizes
-top50_sigs <- read_csv("CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top50/EDM6_Top50_Signature_Level_Ranked.csv")
-top75_sigs <- read_csv("CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top75/EDM6_Top75_Signature_Level_Ranked.csv")
-top100_sigs <- read_csv("CMap Analysis Final/CMap Processed Results/ED-M6 Results/EDM6_Top100//EDM6_Top100_Signature_Level_Ranked.csv")
+top50_sigs <- read_csv("CMap Analysis/CMap Processed Results/ED-M6 Results/EDM6_Top50/EDM6_Top50_Signature_Level_Ranked.csv")
+top75_sigs <- read_csv("CMap Analysis/CMap Processed Results/ED-M6 Results/EDM6_Top75/EDM6_Top75_Signature_Level_Ranked.csv")
+top100_sigs <- read_csv("CMap Analysis/CMap Processed Results/ED-M6 Results/EDM6_Top100//EDM6_Top100_Signature_Level_Ranked.csv")
 
 all_sigs <- bind_rows(Top50 = top50_sigs,
                       Top75 = top75_sigs, Top100 = top100_sigs,
@@ -175,19 +172,21 @@ mimickers_plot_df <- all_sigs_collapsed %>%
   mutate(pert_iname = factor(pert_iname, levels = rev(mimicker_order)))
 
 top_mimickers_plot <- ggplot(mimickers_plot_df, aes(x = pert_iname, y = median_ncs)) +
-  geom_boxplot(fill = "#2698B1", color = "black", outlier.color = "grey50") +
+  geom_boxplot(fill = "#2698B1", color = "black", outlier.color = "grey50",   width = 0.6,
+  linewidth = 0.4,
+  median.linewidth = 0.6) +
   coord_flip() +
   labs(title = NULL, x = "Compound", y = "Median NCS") +
   theme_bw() + 
       theme(
-      plot.title =element_text(size = 12, color = "black", face = "bold", hjust = 1),
+      plot.title =element_text(size = 7, color = "black", face = "bold", hjust = 1),
       axis.title = element_blank(),
-      axis.title.x = element_text(size = 12, color = "black"),
-      axis.text.y = element_text(size = 11, color = "black"),
-      axis.text.x = element_text(size = 12, color = "black"),
-      panel.border = element_rect(color = "black", size = 1, fill = NA), 
+      axis.title.x = element_text(size = 7, color = "black"),
+      axis.text.y = element_text(size = 7, color = "black"),
+      axis.text.x = element_text(size = 7, color = "black"),
+      panel.border = element_rect(color = "black", size = 0.75, fill = NA), 
       legend.position = "none", 
-      plot.margin = margin(t = 10, r = 10, b = 5, l = 5, unit = "pt"))
+      plot.margin = margin(t = 10, r = 1, b = 5, l = 1, unit = "pt"))
 
 opposer_order <- all_sigs_collapsed %>%
   filter(Signature_Class == "Opposer", pert_iname %in% ranked_opposers$pert_iname) %>%
@@ -202,19 +201,21 @@ opposers_plot_df <- all_sigs_collapsed %>%
   mutate(pert_iname = factor(pert_iname, levels = rev(opposer_order)))
 
 top_opposers_plot <- ggplot(opposers_plot_df, aes(x = pert_iname, y = median_ncs)) +
-  geom_boxplot(fill = "#8D1946", color = "black", outlier.color = "grey50") +
+  geom_boxplot(fill = "#8D1946", color = "black", outlier.color = "grey50",   width = 0.6,
+  linewidth = 0.4,
+  median.linewidth = 0.6) +
   coord_flip() +
   labs(title = NULL, x = "Compound", y = "Median NCS") +
   theme_bw() + 
       theme(
-      plot.title =element_text(size = 12, color = "black", face = "bold", , hjust = 1),
+      plot.title =element_text(size = 7, color = "black", face = "bold", , hjust = 1),
       axis.title = element_blank(),
-      axis.title.x = element_text(size = 12, color = "black"),
-      axis.text.y = element_text(size = 11, color = "black"),
-      axis.text.x = element_text(size = 12, color = "black"),
-      panel.border = element_rect(color = "black", size = 1, fill = NA), 
+      axis.title.x = element_text(size = 7, color = "black"),
+      axis.text.y = element_text(size = 7, color = "black"),
+      axis.text.x = element_text(size = 7, color = "black"),
+      panel.border = element_rect(color = "black", size = 0.75, fill = NA), 
       legend.position = "none", 
-      plot.margin = margin(t = 10, r = 10, b = 5, l = 5, unit = "pt"))
+      plot.margin = margin(t = 10, r = 1, b = 5, l = 1, unit = "pt"))
 
 intersect(opposer_order, mimicker_order)
 # tretinoin, and manumycin-a are compounds that are in the top 40 for both mimickers (#37, #40) and opposers (#29, #33)
@@ -224,75 +225,6 @@ intersect(opposer_order, mimicker_order)
 ## Figure 6
 ```{r}
 
-moa_plots <- ggarrange(mimicker_MOA_plot, opposer_MOA_plot, ncol = 2, align = "v", labels = c("a", "b"), font.label = list(size = 24, face = "bold"), label.x = 0, label.y = 1.11)
-
-moa_plots <- moa_plots + theme(plot.margin = margin(t = 20))
-
-
-compound_plots <- ggarrange(top_mimickers_plot,top_opposers_plot, ncol = 2, align = "hv", labels = c("c", "d"), font.label = list(size = 24, face = "bold"), label.x = 0, label.y = 1.05)
-
-fig6 <- ggarrange(moa_plots, compound_plots, ncol = 1, align = "hv", heights = c(1.65, 4))
-
-library(cowplot)
-
-moa_plots <- ggarrange(
-  mimicker_MOA_plot,
-  opposer_MOA_plot,
-  ncol = 2,
-  align = "hv"
-)
-
-moa_plots <- ggdraw(moa_plots) +
-  draw_label("a", x = 0.00, y = 1.08,
-             hjust = 0, vjust = 1,
-             fontface = "bold", size = 24) +
-  draw_label("Recovery-mimicking classes",
-             x = 0.035, y = 1.0,
-             hjust = 0, vjust = 1,
-             fontface = "bold", size = 16) +
-  draw_label("b", x = 0.50, y = 1.08,
-             hjust = 0, vjust = 1,
-             fontface = "bold", size = 24) +
-  draw_label("Recovery-opposing classes",
-             x = 0.535, y = 1.0,
-             hjust = 0, vjust = 1,
-             fontface = "bold", size = 16)
-
-
-compound_plots <- ggarrange(
-  top_mimickers_plot,
-  top_opposers_plot,
-  ncol = 2,
-  align = "hv"
-)
-
-compound_plots <- ggdraw(compound_plots) +
-  draw_label("c", x = 0.00, y = 1.03,
-             hjust = 0, vjust = 1,
-             fontface = "bold", size = 24) +
-  draw_label("Recovery-mimicking compounds",
-             x = 0.035, y = 1.03,
-             hjust = 0, vjust = 1,
-             fontface = "bold", size = 16) +
-  draw_label("d", x = 0.50, y = 1.03,
-             hjust = 0, vjust = 1,
-             fontface = "bold", size = 24) +
-  draw_label("Recovery-opposing compounds",
-             x = 0.535, y = 1.03,
-             hjust = 0, vjust = 1,
-             fontface = "bold", size = 16)
-
-
-fig6 <- ggarrange(
-  moa_plots,
-  compound_plots,
-  ncol = 1,
-  align = "hv",
-  heights = c(1.65, 4)
-)
-
-
-ggsave(moa_plots, filename = "Figures/MOA bar CMap.jpg", width = 7, height = 3.5, dpi = 300)
 
 library(cowplot)
 
@@ -314,27 +246,25 @@ moa_plots <- ggdraw() +
   ) +
   draw_label(
     "a",
-    x = 0.00, y = 0.99,
-    hjust = 0, vjust = 1,
-    fontface = "bold", size = 24
+    x = 0.00, y = 0.90,
+    hjust = 0, vjust = 0,
+    fontface = "bold", size = 10
   ) +
   draw_label(
-    "Recovery-mimicking classes",
-    x = 0.035, y = 0.97,
-    hjust = 0, vjust = 1,
-    fontface = "bold", size = 16
+    "Recovery-mimicking MOA classes",
+    x = 0.2, y = 0.90,
+    hjust = 0, vjust = 0, size = 7
   ) +
   draw_label(
     "b",
-    x = 0.50, y = 0.99,
-    hjust = 0, vjust = 1,
-    fontface = "bold", size = 24
+    x = 0.52, y = 0.90,
+    hjust = 0, vjust = 0,
+    fontface = "bold", size = 10
   ) +
   draw_label(
-    "Recovery-opposing classes",
-    x = 0.535, y = 0.97,
-    hjust = 0, vjust = 1,
-    fontface = "bold", size = 16
+    "Recovery-opposing MOA classes",
+    x = 0.7, y = 0.90,
+    hjust = 0, vjust =0, size = 7
   )
 
 
@@ -356,28 +286,27 @@ compound_plots <- ggdraw() +
   ) +
   draw_label(
     "c",
-    x = 0.00, y = 1.01,
-    hjust = 0, vjust = 1,
-    fontface = "bold", size = 24
+    x = 0.00, y = 0.96,
+    hjust = 0, vjust = 0,
+    fontface = "bold", size = 10
   ) +
   draw_label(
     "Recovery-mimicking compounds",
-    x = 0.035, y = 1,
-    hjust = 0, vjust = 0.96,
-    fontface = "bold", size = 16
+    x = 0.16, y = 0.96,
+    hjust = 0, vjust = 0,size = 7
   ) +
   draw_label(
     "d",
-    x = 0.50, y = 1.01,
-    hjust = 0, vjust = 1,
-    fontface = "bold", size = 24
+    x = 0.52, y = 0.96,
+    hjust = 0, vjust = 0,
+    fontface = "bold", size = 10
   ) +
   draw_label(
     "Recovery-opposing compounds",
-    x = 0.535, y = 1,
-    hjust = 0, vjust = 0.96,
-    fontface = "bold", size = 16
+    x = 0.66, y =0.96,
+    hjust = 0, vjust = 0, size = 7
   )
+
 
 
 # ---- Final figure ----
@@ -389,7 +318,7 @@ fig6 <- ggarrange(
   heights = c(1.45, 4)
 )
 
-ggsave(fig6, filename = "Figures/CMap.jpg", width = 9, height = 12, dpi = 300)
+ggsave(fig6, filename = "Figures/CMap (Figure 3).jpg", width = 180, height = 160, units = "mm", dpi = 600)
 
 ```
 

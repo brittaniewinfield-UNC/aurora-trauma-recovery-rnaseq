@@ -11,18 +11,17 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 ```
 
-<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
 
-<!-- ---- original lines 1428-1519 ---- -->
 
 # TRANSCRIPTION FACTOR 
 
@@ -34,14 +33,8 @@ RNA_seq_counts_tf <- AURORA_RNA_Seq_V47_counts_clean %>%
   left_join(RNA_manifest[, c("INVENTORY.CODE", "Timepoint")], by = "INVENTORY.CODE") %>%
   dplyr::select(INVENTORY.CODE, PID, Timepoint, everything())
 
-# merge metadata and counts
-#TF_analysis_data <- Metadata_Analysis_RNA_paired %>%
-#  inner_join(RNA_seq_counts_tf, by = c("INVENTORY.CODE", "PID")) %>%
-#  as.data.frame()
-
 TF_analysis_data <- RNA_seq_counts_tf %>%
   as.data.frame()
-
 
 rownames(TF_analysis_data) <- TF_analysis_data$INVENTORY.CODE
 
@@ -102,18 +95,18 @@ tf_activity_df <- tf_activity_mat %>%
 
 dim(tf_activity_df)
 
-write.csv(tf_activity_df, "Data/Transcription Factor Data/Analysis Data/TF_Activity_890_3-31-2026.csv")
+write.csv(tf_activity_df, "Data/Transcription Factor Data/Data Files/TF_activity_All_n890.csv")
 
 
 tf_activity_df_ED6M <- tf_activity_df %>%
   filter(INVENTORY.CODE %in% ICs_490_ED6M)
 
-write.csv(tf_activity_df_ED6M, "Data/Transcription Factor Data/Analysis Data/TF_Activity_ED6M_490_3-31-2026.csv")
+write.csv(tf_activity_df_ED6M, "Data/Transcription Factor Data/Analysis Data/TF_activity_ED6M_analysis.csv")
 
 tf_activity_df_ED2WK6M <- tf_activity_df %>%
   filter(INVENTORY.CODE %in% ICs_120_ED2WK6M)
 
-write.csv(tf_activity_df_ED2WK6M, "Data/Transcription Factor Data/Analysis Data/TF_Activity_ED2WK6M_120_3-31-2026.csv")
+write.csv(tf_activity_df_ED2WK6M, "Data/Transcription Factor Data/Analysis Data/TF_activity_ED2WK6M_analysis.csv")
 ```
 
 

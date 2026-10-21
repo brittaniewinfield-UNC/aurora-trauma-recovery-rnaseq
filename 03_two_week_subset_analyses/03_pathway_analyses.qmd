@@ -11,18 +11,15 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 ```
 
-<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
-
-<!-- ---- original lines 564-857 ---- -->
 
 # PATHWAY ANALYSES
 ```{r}
@@ -173,7 +170,7 @@ fgsea_combined <- fgsea_results %>%
                 `Pathway Size` = size, 
                 `Leading Edge Genes` = leadingEdge)
 
-write.csv(fgsea_combined, "../AURORA Final RNA Project Materials/FINAL AURORA RESULTS/2WK Analyses/Pathway Analyses (in progress)/Combined FGSEA Analyses.csv")
+write.csv(fgsea_combined, "2WK Analyses/FGSEA/Combined FGSEA Analyses.csv")
 
 ```
 
@@ -228,12 +225,12 @@ for(sheet in names(wb)) {
 
 # Save workbook
 openxlsx::saveWorkbook(wb,
-  file = "../NATURE MEDICINE PAPER/FINAL AURORA RESULTS/2WK Analyses/Pathway Analyses/High RRS FGSEA GOBP and REACTOME 6-4.xlsx",
+  file = "2WK Analyses/FGSEA/High RRS FGSEA GOBP and REACTOME.xlsx",
   overwrite = TRUE)
 
 ```
 
-## Figure 6c
+## Figure 
 ```{r}
 library(tidyverse)
 
@@ -251,71 +248,29 @@ top10_gobp <- EDWK2_fgsea_gobp %>%
   )
 
 GOBP_figure6 <- ggplot(top10_gobp, aes(x = NES, y = pathway_clean, fill = neg_log10_padj)) +
-  geom_col(width = 0.75) +
+  geom_col(width = 0.5) +
   scale_fill_gradient(
     name = "-log10\n(FDR)",
     low = "#FBE7A1",
     high = "#E8C95A",
     na.value = "white",
-    limits = c(2.8, 4.2),
-    breaks = c(3, 3.5, 4),
-    labels = c("3","3.5", "4")) +
+    limits = c(1, 4.2),
+    breaks = c(2, 3, 4),
+    labels = c("3","3", "4")) +
   scale_x_continuous(breaks = c(0, 1,2), labels = c("0", "1", "2")) +
   labs(title = "Enriched GO BPs\nED \u2192 2WK\n", x = "NES ED \u2192 2WK\n + NES = enrichment at 2WK", y = NULL) +
-  theme_minimal(base_size = 11) +
+  theme_minimal(base_size = 7) +
   theme(
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
-    axis.text = element_text(size = 14, color = "black"),
-    axis.title.x = element_text(size = 14, color = "black"),
-    legend.title = element_text(size = 14, color = "black"),
-    legend.text = element_text(size = 14, color = "black"), 
-        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8), 
+    axis.text = element_text(size = 7, color = "black"),
+    axis.title.x = element_text(size = 7, color = "black"),
+    legend.title = element_text(size = 7, color = "black"),
+    legend.text = element_text(size = 7, color = "black"), 
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7), 
 
         legend.position = "right")
 ```
-
-
-## 2WK reactomes
-```{r}
-library(tidyverse)
-
-top_reactome <- EDWK2_fgsea_reactome %>%
-  as_tibble() %>%
-  arrange(desc(Weighted_Score)) %>%
-  #slice_head(n = ) %>%
-  mutate(
-    pathway_clean = pathway %>%
-      str_remove("^REACTOME_") %>%
-      str_replace_all("_", " ") %>%
-      str_to_sentence(),
-    pathway_clean = fct_reorder(pathway_clean, NES),
-    neg_log10_padj = -log10(padj))
-
-reactome_figure6 <- ggplot(top_reactome, aes(x = NES, y = pathway_clean, fill = neg_log10_padj)) +
-  geom_col(width = 0.75) +
-  geom_vline(xintercept = 0, linewidth = 0.4, color = "grey40") +
-  scale_fill_gradient(
-    name = "-log10\n(FDR)",
-    low = "lightgoldenrod3",
-    high = "khaki1",
-    na.value = "white"#,
-    #breaks = c(3.5, 4),
-    #labels = c("3.5", "4")
-  ) +
-  scale_x_continuous(breaks = c(-2,-1,0, 1,2), labels = c("-2","-1", "0", "1", "2")) +
-  labs(title = "Significant Reactomes", x = "NES ED \u2192 2WK\n + NES = enrichment at 2WK\n - NES = enrichement at ED", y = NULL) +
-  theme_minimal(base_size = 11) +
-  theme(
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank(),
-    axis.text = element_text(size = 14, color = "black"),
-    axis.title.x = element_text(size = 14, color = "black"),
-    legend.title = element_text(size = 14, color = "black"),
-    legend.text = element_text(size = 14, color = "black"), 
-    legend.position = "bottom")
-```
-
 
 
 

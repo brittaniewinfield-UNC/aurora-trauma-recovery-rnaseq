@@ -11,18 +11,15 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root) 
 ```
 
-<!-- Extracted verbatim from `v2 AURORA RNA Week 2 Analyses-SOMC39JC7TQKD.rmd` during repo reorganization. -->
-
-<!-- ---- original lines 156-563 ---- -->
 
 # DIFFERENTIAL EXPRESSION ANALYSES
 ```{r}
@@ -97,10 +94,8 @@ param <- SerialParam()
 
 for (grp in groups_to_run) {
   
-  cat("\n============================\n")
   cat("Processing group:", grp, "\n")
-  cat("============================\n")
-  
+
   group_metadata_all <- coldata_2wk %>%
     filter(RRS_median_group == grp)
   
@@ -238,7 +233,7 @@ interval_DEG_count <- all_results_2wk %>%
               .groups = 'drop') %>%
     arrange(Comparison, Group)
 
-write.csv(interval_DEG_count, "2WK Analyses/Differential Expression Analyses/Summaries/DEG Counts Across Intervals and RRS Groupx.csv")
+#write.csv(interval_DEG_count, "2WK Analyses/Differential Expression Analyses/Summaries/DEG Counts Across Intervals and RRS Groupx.csv")
 
 all_results_2wk_v2 <- bind_rows(high_RRS_ED2WK, low_RRS_ED2WK, high_RRS_2WK6M, low_RRS_2WK6M, high_RRS_ED6M, low_RRS_ED6M)
 
@@ -340,7 +335,7 @@ for (sheet_name in names(dea_list)) {
 
 saveWorkbook(
   DEA_wb,
-  "2WK Analyses/Differential Expression Analyses/Summaries/DEA_Results_ED2WK6M_GlobalNorm.xlsx",
+  "2WK Analyses/Differential Expression Analyses/Summaries/DEA_Results_ED2WK6M.xlsx",
   overwrite = TRUE
 )
 
@@ -402,33 +397,33 @@ volcano_df <- bind_rows(
     RRS_group = factor(RRS_group, levels = c("Low RRS", "High RRS")))
 
 volcano_plot <- ggplot(volcano_df, aes(x = logFC, y = neg_log10_FDR, color = RRS_group)) +
-  geom_point(alpha = 0.05, size = 1.5) +
-  geom_point(data = volcano_df %>% filter(sig), alpha = 1, size = 1.5) +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed", linewidth = 0.8, color = "black") +
+  geom_point(alpha = 0.05, size = 0.5) +
+  geom_point(data = volcano_df %>% filter(sig), alpha = 1, size = 0.5) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", linewidth = 0.5, color = "grey20") +
   facet_wrap(~ Interval, nrow = 1) +
   scale_color_manual(values = c("High RRS" = "#2A93B5", "Low RRS" = "#8D1946")) +
   labs(x = expression(log[2]~fold~change), y = expression(-log[10]~FDR), color = NULL) +
-  theme_bw(base_size = 24) +
+  theme_bw(base_size = 7) +
   scale_x_continuous(breaks = c(-1, 0, 1), labels = c("-1", "0", "1")) +
   guides(color = guide_legend(override.aes = list(size = 4, alpha = 0.8))) +
   theme(
     strip.background = element_blank(),
-    strip.text = element_text(size = 14, face = "plain"),
-    axis.title = element_text(size = 16),
-    axis.text.x = element_text(size = 14, color = "black"),
-    axis.text.y.left = element_text(color = "black", size = 14, margin = margin(r = 1)),
-    legend.text = element_text(size = 14),
+    strip.text = element_text(size = 7, face = "plain"),
+    axis.title = element_text(size = 7),
+    axis.text.x = element_text(size = 7, color = "black"),
+    axis.text.y.left = element_text(color = "black", size = 7, margin = margin(r = 1)),
+    legend.text = element_text(size = 7),
     legend.position = "none",
     legend.margin = margin(t = -12),
     legend.box.margin = margin(t = -12),
     panel.grid.major = element_line(color = "grey95", linewidth = 0.8),
     panel.grid.minor = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8), 
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.7), 
     axis.ticks.length = unit(0, "pt"))
 
 volcano_plot
 
-ggsave(volcano_plot, filename = "volcano_plot_for_methods_v2.jpg", width = 5, height = 3, dpi = 300)
+ggsave(volcano_plot, filename = "Differential Expression Analyses/Plots/volcano_plot_for_methods.jpg", width = 5, height = 3, dpi = 300)
 ```
 
 

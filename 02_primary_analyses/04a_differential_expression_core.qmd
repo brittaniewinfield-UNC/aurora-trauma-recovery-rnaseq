@@ -11,20 +11,18 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)  
 
 source(file.path(here::here(), "02_primary_analyses", "00_setup.R"))
 ```
 
-<!-- Extracted verbatim from `v4 - AURORA Manuscript Analyses ED vs M6.Rmd` during repo reorganization. -->
 
-<!------ original lines 782-1643 ---- -->
 
 # DIFFERENTIAL EXPRESSION ANALYSIS
 Longitudinal ED–6M differential expression analyses were performed separately within each APNS domain and latent class using dream/limma-voom. For each APNS × class subset, raw counts were filtered for low expression (filterByExpr, min.count = 3), normalized by TMM, and modeled with a linear mixed model including Timepoint (ED vs 6M) as a fixed effect and a random intercept for participant (PID). Empirical Bayes moderation was applied, and results were exported for all genes with logFC, moderated statistics, adjusted P-values, and mean voom-normalized expression at ED and 6M.
@@ -61,10 +59,10 @@ cat("Genes retained after global filtering:", nrow(dge_global), "\n")
 dim(dge_global) #12513, 490
 
 genes_tested_DEA <- rownames(dge_global)
-#write.csv(genes_tested_DEA, "Differential Expression Analyses/Summaries/Genes_Tested.csv")
+write.csv(genes_tested_DEA, "Differential Expression Analyses/Summaries/Genes_Tested.csv")
 
 
-output_dir <- "Differential Expression Analyses/Results Per APNS Final"
+output_dir <- "Differential Expression Analyses/Results Per APNS"
 dir.create(output_dir, showWarnings = FALSE)
 
 all_results_global <- list()
@@ -76,10 +74,8 @@ param <- MulticoreParam(workers = detectCores())
 param <- SerialParam()
 
 for (APNS in APNS_ordered) {
-   
-   cat("\n============================\n")
+  
    cat("Processing APNS:", APNS, "\n")
-   cat("============================\n")
    
    classes <- unique(coldata[[APNS]][!is.na(coldata[[APNS]])])
    
@@ -91,12 +87,7 @@ for (APNS in APNS_ordered) {
      
      cat("  Processing class:", class, "| n =", nrow(class_metadata), "\n")
      
-     if (nrow(class_metadata) < 10) {
-       cat("    Skipping — too few samples\n")
-       next
-     }
-     
-     # Subset the globally normalized DGEList — no recalculation ever
+     # Subset the globally normalized DGEList 
      dge <- dge_global[, class_metadata$INVENTORY.CODE]
      
      form <- ~ Timepoint + (1 | PID)
@@ -145,7 +136,7 @@ for (APNS in APNS_ordered) {
      res_class[num_cols] <- lapply(res_class[num_cols], signif, digits = 3)
      
      write.csv(res_class,
-               file = paste0(output_dir, "/DEA_", APNS, "_XX_", class, ".csv"),
+               file = paste0(output_dir, "/DEA_", APNS, "_", class, ".csv"),
                row.names = FALSE)
      
      all_results_global[[paste(APNS, class, sep = "_")]] <- res_class
@@ -165,8 +156,7 @@ to jointly capture effect size and statistical significance.
 The final merged dataset contains, for every gene in every APNS domain × class model, the log2 fold-change, moderated statistics, multiple-testing adjusted p-values, log2-CPM means at ED and M6 (and their CPM back-transformations), and the assigned APNS domain and latent class.
 ```{r}
 # directory of results 
-#de_results_dir <- "Differential Expression Analyses/Results per APNS/"  
-de_results_dir <- "Differential Expression Analyses/Results Per APNS Final/"  
+de_results_dir <- "Differential Expression Analyses/Results Per APNS/"  
 
 # list all CSV files in the directory
 de_files <- list.files(de_results_dir, pattern = "\\.csv$", full.names = TRUE)
@@ -175,9 +165,7 @@ de_files <- list.files(de_results_dir, pattern = "\\.csv$", full.names = TRUE)
 # add file name for traceability
 all_DEA_results <- purrr::map_dfr(de_files, function(file) {
   df <- read_csv(file) %>%
-    mutate(File = basename(file))}) %>%
-  mutate(APNS = recode(as.character(APNS),
-                               "Loss" = "Depression"))
+    mutate(File = basename(file))}) 
 
 dim(all_DEA_results) #387903, 15
 
@@ -215,44 +203,10 @@ all_DEA_results_full <- all_DEA_results %>%
   arrange(APNS, Class)
 
 
-#write.csv(all_DEA_results_full, "Differential Expression Analyses/Summaries/Comprehenseive Differential Expression Results.csv")
-
-# Create the table of all_DEA_results genes and order APNS and Class
-all_DEA_results_concise <- all_DEA_results %>%
-  mutate(
-    APNS = factor(APNS, levels = APNS_ordered),
-    Class = factor(Class, levels = class_order),
-    Recovery_Group = case_when(
-      as.character(Class) == recovered_groups[as.character(APNS)] ~ "Recovered",
-      as.character(Class) == chronic_groups[as.character(APNS)] ~ "Chronic",
-      TRUE ~ NA_character_),
-    Recovery_Group = factor(Recovery_Group, levels = c("Recovered", "Chronic"))) %>%
-  dplyr::select( APNS, Class, Gene, logFC, t, B, z.std, P.Value, adj.P.Val) %>%
-  arrange(APNS, Class, P.Value) %>%
-  mutate(across(where(is.numeric), ~ format_num(.x)))
-
-#write.csv(all_DEA_results_concise, "Differential Expression Analyses/Summaries/Concise Differential Expression Results.csv")
-
-# Create the table of all_DEA_results genes and order APNS and Class
-all_DEA_results_concise_significant <- all_DEA_results %>%
-  mutate(
-    APNS = factor(APNS, levels = APNS_ordered),
-    Class = factor(Class, levels = class_order),
-    Recovery_Group = case_when(
-      as.character(Class) == recovered_groups[as.character(APNS)] ~ "Recovered",
-      as.character(Class) == chronic_groups[as.character(APNS)] ~ "Chronic",
-      TRUE ~ NA_character_),
-    Recovery_Group = factor(Recovery_Group, levels = c("Recovered", "Chronic"))) %>%
-  dplyr::select( APNS, Class, Gene, logFC, t, B, z.std, P.Value, adj.P.Val, Direction, Recovery_Group) %>%
-  arrange(APNS, Class, P.Value) %>%
-  mutate(across(where(is.numeric), ~ format_num(.x))) %>%
-  filter(adj.P.Val < 0.01)
-
-#write.csv(all_DEA_results_concise_significant, "Differential Expression Analyses/Summaries/Significant Differential Expression Results.csv")
+write.csv(all_DEA_results_full, "Differential Expression Analyses/Summaries/Comprehenseive Differential Expression Results.csv")
 
 
-
-  DEA_genes_tested <- table(all_DEA_results$APNS, all_DEA_results$Class)
+DEA_genes_tested <- table(all_DEA_results$APNS, all_DEA_results$Class)
 
 # Convert to dataframe
 DEA_genes_tested <- as.data.frame.matrix(DEA_genes_tested)
@@ -261,7 +215,7 @@ DEA_genes_tested <- as.data.frame.matrix(DEA_genes_tested)
 DEA_genes_tested <- DEA_genes_tested[, c("Low", "Moderate Recovery", "Moderate", "High")]
 
 # reorder rows
-DEA_genes_tested <- DEA_genes_tested[c("Pain", "Avoidance", "Reexperience", "Hyperarousal","Anxious", "Somatic", "MentalFatigue", "Loss", "Nightmare", "Sleep"), ]
+DEA_genes_tested <- DEA_genes_tested[c("Pain", "Avoidance", "Reexperience", "Hyperarousal","Anxious", "Somatic", "MentalFatigue", "Depression", "Nightmare", "Sleep"), ]
 
 write.csv(DEA_genes_tested, "Differential Expression Analyses/Summaries/Number of Genes Tested Across APNS.csv")
 
@@ -390,9 +344,10 @@ DEG_recovered_binary_matrix <- DEA_results_recovered %>%
 shared_DEGs_list <- DEG_recovered_binary_matrix %>%
   filter(APNS_count == 10) %>%
   pull(Gene)
+
  
 length(shared_DEGs_list)  # 3574 DEGs shared across all 10 recovered APNS
-#write.csv(shared_DEGs_list, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS List.csv")
+write.csv(shared_DEGs_list, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS List.csv")
 
 # comprehensive DEG list: union across all recovered APNS 
 comprehensive_deg_list <- DEA_results_recovered %>%
@@ -414,7 +369,7 @@ DEA_results_recovered_shared_summary <- DEA_results_recovered %>%
       .groups = "drop") %>%
   arrange(desc(Avg_Abs_logFC))
 
-#write.csv(DEA_results_recovered_shared_summary, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS Summary Stats.csv")
+write.csv(DEA_results_recovered_shared_summary, "Differential Expression Analyses/Summaries/Shared DEGs Across APNS Summary Stats.csv")
 
 
 ```
@@ -453,130 +408,6 @@ DEA_results_recovered_summary <- DEA_results_recovered %>%
   arrange(desc(Avg_Abs_logFC))
 ```
 
-<!-- Reordered during dependency-bug review: this section ("Examine TMM
-scaling") uses `coldata`/`count_matrix_t`, which are only created by the
-"GLOBAL DEA" chunk below. In the original source file this section sat
-*before* "GLOBAL DEA" but after it in actual execution order (it only ran
-successfully when `coldata` already existed in memory from an earlier
-session) -- a pre-existing ordering issue, not something introduced by
-splitting this file. Moved here, immediately after "GLOBAL DEA", so the
-file runs correctly top to bottom. Content is otherwise unchanged. -->
-
-## Examine TMM scaling 
-If the TMM scaling factors differ meaningfully acorss trajectories in each APNS, that suggests that global normalization may not be the best option and rather we should do within-class normalization. When comparing the TMM scaling factors across trajectories/classes for each APNS, the only APNS that had a nominally significant ANOVA was Pain. To keep consistency across analyses, global normalization was used for all APNS. 
-
-### Prepare data 
-```{r}
-
-tmm_dir <- "Differential Expression Analyses/TMM Scaling Factor Analysis"
-
-# Storage for all scaling factors
-all_tmm_factors <- list()
-
-for (APNS in APNS_ordered) {
-  
-  cat("\nProcessing APNS:", APNS, "\n")
-  
-  # All samples in this APNS
-  apns_metadata <- coldata[!is.na(coldata[[APNS]]), ]
-  apns_metadata$Timepoint <- relevel(factor(apns_metadata$Timepoint), ref = "ED")
-  apns_metadata$PID <- factor(apns_metadata$PID)
-  
-  # Subset count matrix
-  apns_counts <- count_matrix_t[, apns_metadata$INVENTORY.CODE, drop = FALSE]
-  
-  # Create DGEList and normalize jointly
-  dge_joint <- DGEList(counts = round(apns_counts), genes = rownames(apns_counts))
-  keep <- filterByExpr(dge_joint, group = apns_metadata$Timepoint, min.count = 3)
-  dge_joint <- dge_joint[keep, , keep.lib.sizes = FALSE]
-  dge_joint <- calcNormFactors(dge_joint)
-  
-  # Extract TMM norm factors and attach class labels
-  tmm_df <- data.frame(
-    INVENTORY.CODE = colnames(dge_joint),
-    TMM_factor     = dge_joint$samples$norm.factors,
-    lib_size       = dge_joint$samples$lib.size,
-    APNS           = APNS
-  )
-  
-  # Merge in class and timepoint info
-  tmm_df <- merge(tmm_df, 
-                  apns_metadata[, c("INVENTORY.CODE", "PID", "Timepoint", APNS)],
-                  by = "INVENTORY.CODE")
-  
-  colnames(tmm_df)[colnames(tmm_df) == APNS] <- "Class"
-  
-  all_tmm_factors[[APNS]] <- tmm_df
-}
-
-# Combine all APNS results
-tmm_combined <- do.call(rbind, all_tmm_factors)
-rownames(tmm_combined) <- NULL
-
-write.csv(tmm_combined, 
-          file.path(tmm_dir, "TMM_Scaling_Factors_All.csv"),
-          row.names = FALSE)
-
-
-# Summary statistics — mean and SD of TMM factors per APNS × class
-
-tmm_summary <- tmm_combined %>%
-  group_by(APNS, Class) %>%
-  summarise(
-    N_samples = n(),
-    Mean_TMM = round(mean(TMM_factor), 4),
-    SD_TMM = round(sd(TMM_factor), 4),
-    Median_TMM = round(median(TMM_factor), 4),
-    Min_TMM = round(min(TMM_factor), 4),
-    Max_TMM  = round(max(TMM_factor), 4),
-    Range_TMM = round(max(TMM_factor) - min(TMM_factor), 4),
-    .groups = "drop")
-
-write.csv(tmm_summary, file.path(tmm_dir, "TMM_Scaling_Factor_Summary.csv"), row.names = FALSE)
-
-```
-
-### Stats
-Statistical test — do TMM factors differ significantly across classes within each APNS?
-```{r}
-tmm_combined <- read.csv("Differential Expression Analyses/TMM Scaling Factor Analysis/TMM_Scaling_Factors_All.csv")
-
-anova_results <- list()
-
-for (APNS in APNS_ordered) {
-  
-  apns_data <- tmm_combined %>% filter(APNS == !!APNS)
-  
-  # Need at least 2 classes and enough samples
-  if (length(unique(apns_data$Class)) < 2) next
-  
-  # One-way ANOVA: do TMM factors differ by class?
-  fit <- aov(TMM_factor ~ Class, data = apns_data)
-  p_val <- summary(fit)[[1]][["Pr(>F)"]][1]
-  
-  # Effect size: eta-squared
-  ss_between <- summary(fit)[[1]][["Sum Sq"]][1]
-  ss_total   <- sum(summary(fit)[[1]][["Sum Sq"]])
-  eta_sq     <- round(ss_between / ss_total, 3)
-  
-  anova_results[[APNS]] <- data.frame(
-    APNS        = APNS,
-    F_statistic = round(summary(fit)[[1]][["F value"]][1], 3),
-    p_value     = round(p_val, 4),
-    eta_squared = eta_sq,
-    Significant = ifelse(p_val < 0.05, "Yes", "No")
-  )
-  
-  cat("\nAPNS:", APNS, "| ANOVA p =", round(p_val, 4), 
-      "| eta² =", eta_sq, "\n")
-}
-
-anova_df <- do.call(rbind, anova_results)
-rownames(anova_df) <- NULL
-
-write.csv(anova_df, file.path("Differential Expression Analyses/TMM Scaling Factor Analysis/TMM_ANOVA_Results.csv"),
-          row.names = FALSE)
-```
 
 ## DOWNSAMPLE DEA 
 Prep RNA 
@@ -623,13 +454,10 @@ clean_filename <- function(x) {
   x
 }
 
-iteration_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Iteration Results 8"
+iteration_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Iteration Results"
 manifest_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Participant Manifests"
 
-# Set to TRUE to (re-)write the per-iteration CSV + participant manifest
-# files below. Left FALSE by default -- the finalized results for this
-# bootstrap/downsampling analysis already exist and shouldn't be
-# overwritten by re-running this chunk.
+
 export_iteration_results <- FALSE
 
 run_paired_limma_iteration <- function(APNS, class, iteration, job_id, n_downsample, master_seed) {
@@ -640,7 +468,7 @@ run_paired_limma_iteration <- function(APNS, class, iteration, job_id, n_downsam
 
   iteration_file <- file.path(
     iteration_output_dir,
-    paste0("DEA_", APNS_file, "_XX_", class_file, "_Iteration_", sprintf("%02d", iteration),".csv"))
+    paste0("DEA_", APNS_file, "_XX", class_file, "_Iteration_", sprintf("%02d", iteration),".csv"))
 
   manifest_file <- file.path(manifest_output_dir, 
                              paste0("Participants_", APNS_file, "_XX_", class_file, "_Iteration_", 
@@ -690,13 +518,6 @@ run_paired_limma_iteration <- function(APNS, class, iteration, job_id, n_downsam
   sampled_metadata$PID <- factor(sampled_metadata$PID)
 
   sampled_metadata$Timepoint <- relevel(factor(sampled_metadata$Timepoint), ref = "ED")
-
-  ## Paired fixed-effect design
-  ##
-  ## PID controls for participant-specific baseline expression.
-  ## TimepointM6 therefore estimates within-participant ED→M6
-  ## expression change.
-  ## ----------------------------------------------------------
 
   design <- model.matrix(~ PID + Timepoint, data = sampled_metadata)
 
@@ -810,8 +631,10 @@ iteration_job_grid <- purrr::map_dfr(APNS_ordered,
 iteration_job_grid
 nrow(iteration_job_grid)
 
+# takes a long time to run
 all_iteration_summaries <- vector("list", nrow(iteration_job_grid))
 
+# Takes a long time to reun 
 for (i in seq_len(nrow(iteration_job_grid))) {
 
   job <- iteration_job_grid[i, ]
@@ -835,7 +658,7 @@ iteration_DEG_counts
 
 ### Heatmap 
 ```{r}
-iteration_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Iteration Results Final"
+iteration_output_dir <- "Differential Expression Analyses/Downsampled Paired Limma DEA/Iteration Results"
 
 # Get all iteration result files
 iteration_files <- list.files(iteration_output_dir, pattern = "\\.csv$", full.names = TRUE)
@@ -883,12 +706,7 @@ heatmap_data <- downsample_heatmap_data %>%
 
 deg_fill_scale <- scale_fill_gradientn(
   name = "Median DEGs\nFDR < 0.05",
-  colours = c(
-    "#F0F5F6",
-    "#B3D5DC",
-    "#5799B2",
-    "#006A98"
-  ),
+  colours = c("#F0F5F6","#B3D5DC","#5799B2","#006A98"),
   limits = c(0, 2600),
   breaks = c(0, 500, 1000, 1500, 2000, 2500)
 )
@@ -913,7 +731,7 @@ p_downsample_heatmap <- ggplot(heatmap_data, aes(x = Class, y = APNS, fill = Med
 
 p_downsample_heatmap
 
-ggsave(p_downsample_heatmap, filename = "Figures/Ext Data Fig 2 - Supplementary_DEA_Heatmap.jpg", width = 4.5, height = 4, dpi = 300)
+ggsave(p_downsample_heatmap, filename = "Differential Expression Analyses/Downsampled Paired Limma DEA/Plots/Bootstrapped_DEA_Heatmap.jpg", width = 4.5, height = 4, dpi = 300)
 
 
 ```

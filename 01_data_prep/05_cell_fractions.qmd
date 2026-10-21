@@ -11,18 +11,15 @@ format:
 ```{r}
 #| label: setup
 #| include: false
-# Resolve paths relative to the project's DATA root (one level above this
-# repo), where Data/ and the various analysis-output folders already live
-# locally. These folders are NOT part of this git repository (see README) --
-# they stay local / go to Dataverse, never to GitHub.
+
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
 data_root <- dirname(here::here())
 knitr::opts_knit$set(root.dir = data_root)
-setwd(data_root)  # also set for interactive, chunk-by-chunk execution in RStudio
+setwd(data_root)
 ```
-
-<!-- Extracted verbatim from `AURORA Data Prep - v6.Rmd` during repo reorganization. -->
-
-<!-- ---- original lines 574-715 ---- -->
 
 # CELL FRACTIONS (ED, 2WK, M6)
 Cibersort cell fraction estimates were calculated by Ying. 
@@ -30,7 +27,7 @@ Cibersort cell fraction estimates were calculated by Ying.
 ## Data prep 
 ```{r}
 # load CIBERSORT.x (relative mode) 
-cibersort_data <- read_csv("Data/Cibersort_relativeMode_v47_data.csv", show_col_types = FALSE)
+cibersort_data <- read_csv("Data/Cibersort Data/Data Files/Cibersort_relativeMode_v47_data.csv", show_col_types = FALSE)
 
 # identify cell-type columns (everything except these known non-cell columns)
 non_cell_cols <- c("Mixture", "P-value", "Correlation", "RMSE")
@@ -109,14 +106,14 @@ metadata_cibersort_wide_asin_ED6M_490 <- metadata_cibersort_wide_asin %>%
 
 dim(metadata_cibersort_wide_asin_ED6M_490) # 490  18
 
-write.csv(metadata_cibersort_wide_asin_ED6M_490, "Data/Cibersort Data/Analysis Data/Cibersort_Arcsin_Estimated_Cell_Fractions_ED6M_490_3-23-2026.csv")
+write.csv(metadata_cibersort_wide_asin_ED6M_490, "Data/Cibersort Data/Analysis Data/Cibersort_arcsin_estimated_cell_fractions_ED6M_analysis.csv")
 
 metadata_cibersort_wide_asin_ED2WK6M_120 <- metadata_cibersort_wide_asin %>% 
   filter(INVENTORY.CODE %in% ICs_120_ED2WK6M)
 
 dim(metadata_cibersort_wide_asin_ED2WK6M_120) # 120  18
 
-write.csv(metadata_cibersort_wide_asin_ED2WK6M_120, "Data/Cibersort Data/Analysis Data/Cibersort_Arcsin_Estimated_Cell_Fractions_ED2WK6M_120_3-23-2026.csv")
+write.csv(metadata_cibersort_wide_asin_ED2WK6M_120, "Data/Cibersort Data/Analysis Data/Cibersort_arcsin_estimated_cell_fractions_ED2WK6M_analysis.csv")
 
 ```
 
@@ -161,7 +158,7 @@ cell_stats_compare <- bind_rows(
   arrange(CellType, Scale)
 
 
-write.csv(cell_stats_compare, "Data/Cibersort Data/Analysis Data/Cibersort_Estimated_Cell_Fractions_Stat_Summary_3-23-2026.csv")
+write.csv(cell_stats_compare, "Data/Cibersort Data/Analysis Data/Cibersort_estimated_cell_fractions_stat_summary.csv")
 
 ```
 
