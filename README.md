@@ -1,5 +1,7 @@
 # AURORA Longitudinal RNA-seq: Trauma Recovery
 
+Analysis code accompanying "A robust coordinated molecular response following trauma promotes recovery and protects against chronic pain and neuropsychiatric symptoms" by Winfield et al.
+
 ## Summary 
 This repository contains the analysis code behind a longitudinal multi-omic study of recovery from traumatic stress exposure, using paired whole-blood transcriptomic, immune cell, cytokine, and steroid hormone profiles collected from AURORA study participants at an initial emergency department visit and again six months later. Because prior work has largely examined single biological markers in cross-sectional cohorts, these analyses were designed to capture how transcriptional, innate immune, and stress-hormone biology change together over time, and to test whether that coordinated trajectory, rather than any one signal, distinguishes individuals who recover from those who develop chronic symptoms. Each script corresponds to one analysis step and is runnable and readable independently.
 
@@ -7,11 +9,10 @@ This repository contains the analysis code behind a longitudinal multi-omic stud
 
 The biological processes mediating recovery versus development of adverse posttraumatic neuropsychiatric sequelae (APNS) after traumatic stress exposure remain poorly understood. Here, we characterized longitudinal molecular trajectories among trauma survivors who recovered or had persistent APNS across ten domains (e.g., anxiety, pain). Recovery involved rapid widespread transcriptional changes signaling an early innate immune response that transitioned into homeostatic and wound-healing processes within two weeks and adaptive immunity by six months, whereas persistent APNS trajectories showed fewer molecular changes. To quantify this molecular program, we derived an externally validated RNA Recovery Score (RRS); individuals with higher RRS showed greater clinical recovery, elevated peritraumatic cortisol, and lower cumulative stress. Drug-response profiling identified candidate pathways and molecular interventions with potential to modulate the recovery-associated response. Together, these findings reveal posttraumatic recovery as an active, coordinated biological process and provide a framework for developing interventions that harness endogenous recovery mechanisms to prevent persistent APNS.
 
-Analysis code accompanying "A robust coordinated molecular response following trauma promotes recovery and protects against chronic pain and neuropsychiatric symptoms" (AURORA cohort).
-
-Written in [Quarto](https://quarto.org) (`.qmd`). Each script renders to a fully annotated GitHub-flavored-markdown file (code + narrative + figures) via `quarto render`, viewable directly on GitHub.
 
 ## Repository structure
+
+Written in [Quarto](https://quarto.org) (`.qmd`). Each script renders to a fully annotated GitHub-flavored-markdown file (code + narrative + figures) via `quarto render`, viewable directly on GitHub.
 
 ```
 01_data_prep/                  Data loading, cleaning, and cohort/feature-matrix preparation
