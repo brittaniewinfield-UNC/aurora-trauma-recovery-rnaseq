@@ -21,8 +21,7 @@ Written in [Quarto](https://quarto.org) (`.qmd`). Each script renders to a fully
   05_cell_fractions.qmd            CIBERSORTx cell-fraction preparation
   06_hormones.qmd                  Biocrates hormone panel preparation
   07_cytokines.qmd                 Cytokine panel preparation
-  08_crp.qmd                       CRP preparation
-  09_transcription_factors.qmd     Transcription factor activity inference
+  08_transcription_factors.qmd     Transcription factor activity inference
 
 02_primary_analyses/           Main ED-vs-6M manuscript analyses
   00_setup.R                       Shared libraries, helpers, base data load, checkpoint helpers (sourced by every script below -- not a standalone analysis)
@@ -32,16 +31,14 @@ Written in [Quarto](https://quarto.org) (`.qmd`). Each script renders to a fully
   04a_differential_expression_core.qmd
   04b_deg_heatmap_and_volcano_plots.qmd      
   05_fgsea.qmd
-  06_reactome.qmd
-  07_ed_vs_6m_cytokines_cellfractions_tfs_crp.qmd
-  08_recovered_vs_chronic_cytokines_cellfractions_tfs_crp.qmd
-  09_cell_by_gene_interactions.qmd
-  10a_rrs_construction_and_evaluation.qmd
-  10b_rrs_external_validation_painomics.qmd  
-  11_rrs_risk_resilience_factors.qmd
-  12_rrs_hormones_cortisol.qmd
-  13a_cmap_query_and_processing.qmd
-  13b_cmap_plots_figure6.qmd                 
+  06_ed_vs_6m_cytokines_cellfractions_tfs_crp.qmd
+  07_cell_by_gene_interactions.qmd
+  08a_rrs_construction_and_evaluation.qmd
+  08b_rrs_external_validation_painomics.qmd  
+  09_rrs_risk_resilience_factors.qmd
+  10_rrs_hormones_cortisol.qmd
+  11a_cmap_query_and_processing.qmd
+  11b_cmap_plots_figure6.qmd                 
 
 03_two_week_subset_analyses/   Secondary analyses in the n=40 two-week subsample
   01_setup_and_functions.qmd
@@ -50,8 +47,7 @@ Written in [Quarto](https://quarto.org) (`.qmd`). Each script renders to a fully
   04_transcription_factor_activity.qmd
   05_cell_fractions.qmd
   06_cytokines.qmd
-  07_crp.qmd
-  08_stable_genes_and_figure6_assembly.qmd
+  07_stable_genes_and_figure6_assembly.qmd
 
 data/                          See data/README.md -- no participant-level data is included in this repository
 ```
@@ -99,23 +95,18 @@ which restores the packages, helper functions/constants, and base data load that
 | `04a_differential_expression_core.qmd` | `all_DEA_results`, `DEA_results_recovered`, `shared_DEGs_list`, `DEA_results_recovered_shared_summary` | -- |
 | `04b_deg_heatmap_and_volcano_plots.qmd` | `DEG_heatmap` | `all_DEA_results`, `DEA_results_recovered` (04a); `trajectory_lines` (03) |
 | `05_fgsea.qmd` | `GOBP_heatmap` | `all_DEA_results` (04a) |
-| `06_reactome.qmd` | `Reactome_heatmap` | `all_DEA_results` (04a) |
-| `07_ed_vs_6m_cytokines_cellfractions_tfs_crp.qmd` | `TF_data` | `all_DEA_results` (04a); `DEG_heatmap` (04b); `GOBP_heatmap` (05); `Reactome_heatmap` (06) |
-| `08_recovered_vs_chronic_cytokines_cellfractions_tfs_crp.qmd` | -- | `TF_data` (07) |
-| `09_cell_by_gene_interactions.qmd` | -- | `shared_DEGs_list` (04a) |
-| `10a_rrs_construction_and_evaluation.qmd` | `RRS_AUC`, `RRS_full_cohort`, `beta_vec_final`, `final_stable_genes`, `p_holdout`, `p_train`, `meta_RRS_df` | `shared_DEGs_list`, `DEA_results_recovered_shared_summary` (04a) |
-| `10b_rrs_external_validation_painomics.qmd` | -- | `RRS_AUC`, `RRS_full_cohort`, `beta_vec_final`, `final_stable_genes`, `p_holdout`, `p_train` (10a) |
-| `11_rrs_risk_resilience_factors.qmd` | `regression_results_df_plot` | `meta_RRS_df` (10a) |
-| `12_rrs_hormones_cortisol.qmd` | -- | `meta_RRS_df` (10a); `regression_results_df_plot` (11) |
-| `13a_cmap_query_and_processing.qmd` | `all_cmap_results`, `mimicker_summary`, `opposer_summary` | -- |
-| `13b_cmap_plots_figure6.qmd` | -- | `all_cmap_results`, `mimicker_summary`, `opposer_summary` (13a) |
-
-Scripts not listed (`01`, `02`) only need `00_setup.R` and nothing else. A safe run order satisfying every row above: `01, 02, 03, 04a, 04b, 05, 06, 07, 08, 09, 10a, 10b, 11, 12, 13a, 13b`.
-
+| `06_ed_vs_6m_cytokines_cellfractions_tfs.qmd` | `TF_data` | `all_DEA_results` (04a); `DEG_heatmap` (04b); `GOBP_heatmap` (05); `Reactome_heatmap` (06) |
+| `07_cell_by_gene_interactions.qmd` | -- | `shared_DEGs_list` (04a) |
+| `08a_rrs_construction_and_evaluation.qmd` | `RRS_AUC`, `RRS_full_cohort`, `beta_vec_final`, `final_stable_genes`, `p_holdout`, `p_train`, `meta_RRS_df` | `shared_DEGs_list`, `DEA_results_recovered_shared_summary` (04a) |
+| `08b_rrs_external_validation_painomics.qmd` | -- | `RRS_AUC`, `RRS_full_cohort`, `beta_vec_final`, `final_stable_genes`, `p_holdout`, `p_train` (10a) |
+| `09_rrs_risk_resilience_factors.qmd` | `regression_results_df_plot` | `meta_RRS_df` (10a) |
+| `10_rrs_hormones_cortisol.qmd` | -- | `meta_RRS_df` (10a); `regression_results_df_plot` (11) |
+| `11a_cmap_query_and_processing.qmd` | `all_cmap_results`, `mimicker_summary`, `opposer_summary` | -- |
+| `11b_cmap_plots_figure6.qmd` | -- | `all_cmap_results`, `mimicker_summary`, `opposer_summary` (13a) |
 
 ## Dependencies (renv)
 
-`_dependencies.R` lists every package this repo uses (CRAN and Bioconductor, scanned from all 33 scripts). To pin exact, reproducible versions from your own working R library:
+`_dependencies.R` lists every package this repo uses (CRAN and Bioconductor). 
 
 ```r
 install.packages("renv")      # if you don't have it already
@@ -123,7 +114,7 @@ renv::init()                  # scans the project (incl. _dependencies.R), creat
 renv::snapshot()               # records the exact installed versions you're actually running on
 ```
 
-Commit the resulting `renv.lock` (and `renv/activate.R`, `renv/settings.json` -- `renv::init()` creates a `renv/.gitignore` automatically that keeps the actual package library itself out of git). Anyone cloning the repo can then run `renv::restore()` to recreate your exact environment.
+Commit the resulting `renv.lock` (and `renv/activate.R`, `renv/settings.json` -- `renv::init()` creates a `renv/.gitignore` automatically that keeps the actual package library itself out of git). To clone the repo  you can then run `renv::restore()` to recreate your exact environment.
 
 ## License
 
