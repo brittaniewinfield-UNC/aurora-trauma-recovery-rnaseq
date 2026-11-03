@@ -1,0 +1,126 @@
+---
+title: "PID/Inventory Code Mapping and RNA Data Export"
+format:
+  gfm:
+    toc: true
+  html:
+    toc: true
+    code-fold: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# This script needs to read data files that live OUTSIDE this git repository 
+# For access to those files, see README 
+
+data_root <- dirname(here::here())
+knitr::opts_knit$set(root.dir = data_root)
+setwd(data_root) 
+```
+
+
+# PID / INVENTORY CODES 
+
+## ED and M6 
+```{r}
+# PIDs for 
+PIDs_245_ED6M <- Metadata_Analysis_RNA_paired %>% 
+  filter(Timepoint %in% c("ED", "M6")) %>%
+  pull(PID) %>%
+  unique()
+
+length(PIDs_245_ED6M) #245
+
+ICs_490_ED6M <- Metadata_Analysis_RNA_paired %>% 
+  filter(Timepoint %in% c("ED", "M6")) %>%
+  pull(INVENTORY.CODE) %>%
+  unique()
+
+length(ICs_490_ED6M) #490 
+```
+
+## ED, 2WK, M6
+```{r}
+# PIDs for the subset of participants that have an additional 2 week sample 
+PIDs_40_ED2WK6M <- Metadata_Analysis_RNA_paired %>% 
+  filter(Timepoint %in% c("ED", "WK2", "M6")) %>%
+  group_by(PID) %>%
+  summarise(n_timepoints = n_distinct(Timepoint), .groups = "drop") %>%
+  filter(n_timepoints == 3) %>%
+  pull(PID)
+
+write.csv(PIDs_40_ED2WK6M, "Data/Metadata/Analysis Data/PIDs_Paired_ED2WK6M.csv")
+
+length(PIDs_40_ED2WK6M) #40 
+
+ICs_120_ED2WK6M <- Metadata_Analysis_RNA_paired %>% 
+  filter(PID %in% PIDs_40_ED2WK6M,
+         Timepoint %in% c("ED", "WK2", "M6")) %>%
+  pull(INVENTORY.CODE)
+
+length(ICs_120_ED2WK6M)
+
+# opportunity to write the list of ED-2WK-6M Inventory codes
+write.csv(ICs_120_ED2WK6M, "Data/Metadata/Analysis Data/ICs_Paired_ED2WK6M.csv")
+
+
+```
+
+## Export RNA data 
+
+### ED & 6M
+```{r}
+RNA_manifest_analysis_ED6M <- RNA_manifest %>%
+  filter(INVENTORY.CODE %in% ICs_490_ED6M)
+
+# opportunity to write the list of ED-2WK-6M Inventory codes
+write.csv(RNA_manifest_analysis_ED6M, "Data/RNA Data/Analysis Data/RNA_manifest_ED6M_analysis.csv")
+
+## Counts 
+AURORA_RNA_Seq_V47_counts_ED6M <- AURORA_RNA_Seq_V47_counts_clean %>%
+  filter(INVENTORY.CODE %in% ICs_490_ED6M)
+
+dim(AURORA_RNA_Seq_V47_counts_ED6M) # 490 x 19906
+
+write.csv(AURORA_RNA_Seq_V47_counts_ED6M, "Data/RNA Data/Analysis Data/AURORA_RNAseq_counts_ED6M_analysis.csv")
+
+## Log2 
+AURORA_RNA_Seq_V47_log2_ED6M <- AURORA_RNA_Seq_V47_log2_clean %>%
+  filter(INVENTORY.CODE %in% ICs_490_ED6M)
+
+dim(AURORA_RNA_Seq_V47_log2_ED6M) # 490 x 19906
+
+write.csv(AURORA_RNA_Seq_V47_log2_ED6M, "Data/RNA Data/Analysis Data/AURORA_RNAseq_log2_ED6M_analysis.csv")
+
+```
+
+### ED 2WK 6M 
+```{r}
+RNA_manifest_analysis_ED2WK6M <- RNA_manifest %>%
+  filter(INVENTORY.CODE %in% ICs_120_ED2WK6M)
+
+dim(RNA_manifest_analysis_ED2WK6M) # 120 x 4
+
+write.csv(RNA_manifest_analysis_ED2WK6M, "Data/RNA Data/Analysis Data/RNA_manifest_ED2WK6M_analysis.csv")
+
+## Counts 
+AURORA_RNA_Seq_V47_counts_ED2WK6M <- AURORA_RNA_Seq_V47_counts_clean %>%
+  filter(INVENTORY.CODE %in% ICs_120_ED2WK6M)
+
+dim(AURORA_RNA_Seq_V47_counts_ED2WK6M) # 120 x 19906
+
+write.csv(AURORA_RNA_Seq_V47_counts_ED2WK6M, "Data/RNA Data/Analysis Data/AURORA_RNAseq_counts_ED2WK6M_analysis.csv")
+
+## Log2 
+AURORA_RNA_Seq_V47_log2_ED2WK6M <- AURORA_RNA_Seq_V47_log2_clean %>%
+  filter(INVENTORY.CODE %in% ICs_120_ED2WK6M)
+
+dim(AURORA_RNA_Seq_V47_log2_ED2WK6M) # 120 x 19906
+
+write.csv(AURORA_RNA_Seq_V47_log2_ED2WK6M, "Data/RNA Data/Analysis Data/AURORA_RNAseq_log2_ED2WK6M_analysis.csv")
+
+```
+
+
